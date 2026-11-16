@@ -175,6 +175,26 @@ describe('Worker de préchauffage du cache', () => {
     expect(member).toHaveBeenCalledTimes(1);
   });
 
+  it('onCycleEnd appelé à chaque cycle planifié ; son échec est journalisé sans arrêter le worker', async () => {
+    await seed();
+    const member = jest.fn(async () => ok());
+    const reports: unknown[] = [];
+    const onCycleEnd = jest.fn((report: unknown) => {
+      reports.push(report);
+      if (reports.length === 1) throw new Error('disque plein');
+    });
+    const { logger, child } = fakeLogger();
+    const worker = createRefreshWorker({ players: { member }, logger, intervalMs: 20, onCycleEnd });
+    worker.start();
+    await calledTimes(onCycleEnd, 2);
+    await worker.stop();
+    expect(reports[0]).toEqual({ players: 4, refreshed: 4, failed: 0, aborted: false });
+    expect(child.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) }),
+      'Heartbeat impossible',
+    );
+  });
+
   it('cycle en échec (base indisponible) → journalisé, cycle suivant planifié', async () => {
     await seed();
     jest.spyOn(TrackedPlayerModel, 'distinct').mockRejectedValueOnce(new Error('mongo down'));

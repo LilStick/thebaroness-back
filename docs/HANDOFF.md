@@ -45,6 +45,13 @@ Retour de l'utilisateur : pour créer un groupe (et suivre un joueur), il faut s
 - Effet pour le front : profils et comparaisons de ces joueurs s'ouvrent sans attendre Deadlock API, avec des données de moins de 5 min environ. Aucune route ni forme modifiée.
 - Variables : `REFRESH_WORKER_ENABLED=true|false` (actif par défaut), `REFRESH_INTERVAL_MS=300000`. Voir `.env.example`.
 
+## Déploiement Coolify (16/11/2026, issue #61)
+
+- Un conteneur par service : `mongodb`, `api`, `worker` (même image, `node dist/worker.js`) côté back via `compose.prod.yaml` ; le front en application Dockerfile séparée (son `Dockerfile` nginx actuel convient tel quel).
+- Deux domaines : `https://<domaine>` (front) et `https://api.<domaine>` (back). Le front se build avec `VITE_API_BASE_URL=https://api.<domaine>/api` ; le back autorise l'origine du front (`CORS_ORIGIN`). Guide complet : `docs/DEPLOY.md`.
+- Rien à changer dans le code du front. A noter : `nginx.conf` n'a pas de `location /api`, ce qui est normal avec deux domaines.
+- En local, `docker compose up --build -d` lance désormais aussi le conteneur `worker`.
+
 ## Etat des routes
 
 | Route                                                                                                                                         | Etat                      | Note                                                                                                                     |
@@ -97,6 +104,8 @@ npm run dev             # proxy Vite /api vers http://localhost:3001
 Les routes catalogue et joueurs interrogent la vraie API Deadlock : prévoir une connexion internet. En cas de limitation par la source, les réponses passent en `isStale` ou `isPartial`, ou en 503 avec `Retry-After`.
 
 ## Journal des changements de contrat (du plus récent au plus ancien)
+
+- 16/11/2026 : déploiement (issue #61) : conteneur `worker` séparé (`dist/worker.js`), `compose.prod.yaml` pour Coolify, `docs/DEPLOY.md`. Contrat HTTP inchangé.
 
 - 16/11/2026 : worker de préchauffage (issue #58), nouvelles variables `REFRESH_WORKER_ENABLED` et `REFRESH_INTERVAL_MS`. Contrat HTTP inchangé (v1.6.0).
 

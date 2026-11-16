@@ -4,6 +4,9 @@ import { GroupModel } from '../modules/groups/group.model';
 import type { PlayersService } from '../modules/players/players.service';
 import { TrackedPlayerModel } from '../modules/tracked-players/tracked-player.model';
 
+/** Fichier réécrit à chaque cycle par le conteneur worker ; lu par son healthcheck. */
+export const HEARTBEAT_FILE = '/tmp/thebaroness-worker.heartbeat';
+
 /** Joueurs actualisés en parallèle : laisse l'essentiel du quota Deadlock aux visiteurs. */
 const DEFAULT_CONCURRENCY = 2;
 
@@ -12,6 +15,8 @@ export interface RefreshWorkerOptions {
   logger: Logger;
   intervalMs: number;
   concurrency?: number;
+  /** Appelé à la fin de chaque cycle planifié, réussi ou non (heartbeat du healthcheck). */
+  onCycleEnd?: (report: CycleReport) => void;
 }
 
 export interface CycleReport {
@@ -46,6 +51,7 @@ export function createRefreshWorker({
   logger,
   intervalMs,
   concurrency = DEFAULT_CONCURRENCY,
+  onCycleEnd,
 }: RefreshWorkerOptions) {
   const log = logger.child({ job: 'refresh-worker' });
   let timer: NodeJS.Timeout | undefined;
@@ -89,6 +95,14 @@ export function createRefreshWorker({
         .catch((error: unknown) => {
           log.error({ err: error }, 'Cycle de préchauffage en échec');
           return { players: 0, refreshed: 0, failed: 0, aborted: true };
+        })
+        .then((report) => {
+          try {
+            onCycleEnd?.(report);
+          } catch (error) {
+            log.warn({ err: error }, 'Heartbeat impossible');
+          }
+          return report;
         })
         .finally(() => {
           current = undefined;
