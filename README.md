@@ -14,6 +14,8 @@ Le frontend React vit dans un dépôt séparé : [`luminescencedev/thebaroness`]
 
 ## Démarrage rapide (Docker)
 
+Déploiement en production (Coolify, un conteneur par service) : voir [`docs/DEPLOY.md`](docs/DEPLOY.md).
+
 Prérequis : Docker avec Compose v2.
 
 ```bash
@@ -25,12 +27,12 @@ docker compose up --build -d
 curl http://localhost:3001/api/health        # {"status":"ok"}
 ```
 
-| Commande                       | Effet                                                                         |
-| ------------------------------ | ----------------------------------------------------------------------------- |
-| `docker compose up --build -d` | Construit et démarre l'API et MongoDB (l'API attend que Mongo soit _healthy_) |
-| `docker compose logs -f api`   | Journal JSON de l'API                                                         |
-| `docker compose down`          | Arrête les conteneurs, **les données sont conservées** (volume `mongo-data`)  |
-| `docker compose down -v`       | ⚠️ Arrête **et supprime définitivement la base** (volume `mongo-data`)        |
+| Commande                       | Effet                                                                                                     |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| `docker compose up --build -d` | Construit et démarre MongoDB, l'API et le worker de préchauffage (ils attendent que Mongo soit _healthy_) |
+| `docker compose logs -f api`   | Journal JSON de l'API                                                                                     |
+| `docker compose down`          | Arrête les conteneurs, **les données sont conservées** (volume `mongo-data`)                              |
+| `docker compose down -v`       | ⚠️ Arrête **et supprime définitivement la base** (volume `mongo-data`)                                    |
 
 MongoDB n'est joignable que par l'API (réseau interne `mongodb:27017`) et, pour la maintenance, sur `127.0.0.1:27017`.
 

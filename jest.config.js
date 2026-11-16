@@ -6,7 +6,7 @@ module.exports = {
   testMatch: ['**/*.test.ts'],
   globalSetup: '<rootDir>/tests/setup/global-setup.ts',
   globalTeardown: '<rootDir>/tests/setup/global-teardown.ts',
-  collectCoverageFrom: ['src/**/*.ts', '!src/index.ts'],
+  collectCoverageFrom: ['src/**/*.ts', '!src/index.ts', '!src/worker.ts'],
   coverageThreshold: { global: { lines: 95, branches: 85, functions: 95, statements: 95 } },
   passWithNoTests: true,
   watchman: false,

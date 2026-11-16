@@ -1,4 +1,5 @@
-# API thebaroness + MongoDB.
+# Dev local : MongoDB + API + worker (un conteneur par service, comme en production).
+# Production (Coolify) : compose.prod.yaml, voir docs/DEPLOY.md.
 #   docker compose up --build -d     démarrer
 #   docker compose down              arrêter (données conservées)
 #   docker compose down -v           ⚠️ arrêter ET SUPPRIMER la base (volume mongo-data)
@@ -33,12 +34,43 @@ services:
       MONGODB_URI: mongodb://mongodb:27017/thebaroness
       PORT: '3001'
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET doit être défini (fichier .env ou environnement)}
+      # Le préchauffage tourne dans le conteneur worker.
+      REFRESH_WORKER_ENABLED: 'false'
     ports:
       - '${API_PORT:-3001}:3001'
     networks: [backend]
     depends_on:
       mongodb:
         condition: service_healthy
+
+  worker:
+    build: .
+    image: thebaroness-back:local
+    restart: unless-stopped
+    command: ['node', 'dist/worker.js']
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MONGODB_URI: mongodb://mongodb:27017/thebaroness
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET doit être défini (fichier .env ou environnement)}
+    # Le healthcheck HTTP de l'image ne s'applique pas : pas de serveur dans ce conteneur.
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "const s=require('fs').statSync('/tmp/thebaroness-worker.heartbeat');process.exit(Date.now()-s.mtimeMs<2*Number(process.env.REFRESH_INTERVAL_MS||300000)+120000?0:1)"
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks: [backend]
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      api:
+        condition: service_started
 
 volumes:
   mongo-data:
