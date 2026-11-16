@@ -4,7 +4,9 @@
 # Variables à renseigner dans Coolify : voir docs/DEPLOY.md.
 # Coolify v3 injecte lui-même les Secrets dans l'environnement de chaque service : seules les
 # valeurs propres au réseau Docker figurent ici (une même clé en double fait échouer le pull).
-# Variables absentes : défauts de src/config/env.ts ; obligatoire manquante : refus au démarrage.
+# Coolify ajoute aussi NODE_ENV et PORT : NODE_ENV=production vient du Dockerfile, PORT vaut 3001
+# par défaut. Variables absentes : défauts de src/config/env.ts ; obligatoire manquante : refus
+# au démarrage.
 services:
   mongodb:
     image: mongo:8.0
@@ -24,8 +26,6 @@ services:
     expose:
       - '3001'
     environment:
-      NODE_ENV: production
-      PORT: '3001'
       MONGODB_URI: mongodb://mongodb:27017/thebaroness
       # Le préchauffage tourne dans le conteneur worker, pas dans l'API.
       REFRESH_WORKER_ENABLED: 'false'
@@ -38,7 +38,6 @@ services:
     restart: unless-stopped
     command: ['node', 'dist/worker.js']
     environment:
-      NODE_ENV: production
       MONGODB_URI: mongodb://mongodb:27017/thebaroness
     # Sain si un cycle s'est terminé récemment (heartbeat réécrit à chaque cycle).
     healthcheck:
