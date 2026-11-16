@@ -35,6 +35,10 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => value || undefined),
+  /** Préchauffage périodique du cache des joueurs suivis et membres de groupes. */
+  REFRESH_WORKER_ENABLED: z.stringbool().default(true),
+  /** Délai entre deux cycles du worker (minimum 1 min). */
+  REFRESH_INTERVAL_MS: z.coerce.number().int().min(60_000).default(300_000),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
 });
 
