@@ -77,6 +77,11 @@ export interface PlayerRanks {
   ranks: Map<number, KnownRank>;
   /** Comptes des lots en échec : leur rang est inconnu, pas absent. */
   unchecked: Set<number>;
+  /**
+   * Comptes qui ont joué en classé mais dont la dernière partie classée n'a pas de rang : la
+   * source renvoie badge 0, alors qu'un rang plus ancien peut figurer dans l'historique.
+   */
+  rankedWithoutBadge: Set<number>;
 }
 
 export function createDeadlockApi(client: DeadlockClient) {
@@ -149,6 +154,7 @@ export function createDeadlockApi(client: DeadlockClient) {
       );
       const ranks = new Map<number, KnownRank>();
       const unchecked = new Set<number>();
+      const rankedWithoutBadge = new Set<number>();
       for (const { chunk, value } of results) {
         if (value === undefined) {
           for (const id of chunk) unchecked.add(id);
@@ -157,9 +163,10 @@ export function createDeadlockApi(client: DeadlockClient) {
         for (const r of value ?? []) {
           if (r.badge)
             ranks.set(r.account_id, { badge: r.badge, at: r.last_match?.start_time ?? 0 });
+          else if (r.last_match) rankedWithoutBadge.add(r.account_id);
         }
       }
-      return { ranks, unchecked };
+      return { ranks, unchecked, rankedWithoutBadge };
     },
 
     /** `GET /v1/leaderboard/{region}` : classement de la saison courante (mis à jour chaque heure). */
