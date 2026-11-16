@@ -47,6 +47,9 @@ Retour de l'utilisateur : pour créer un groupe (et suivre un joueur), il faut s
 
 ## Déploiement Coolify (16/11/2026, issue #61)
 
+- **Back en production : `https://api.thebaroness.4esport.fr`** (Swagger : `/api/docs`). Vérifié : toutes les routes, redirection Steam, CORS pour `https://thebaroness.4esport.fr`, HTTPS Let's Encrypt.
+- **Front à déployer sur `https://thebaroness.4esport.fr`**, build avec `VITE_API_BASE_URL=https://api.thebaroness.4esport.fr/api`.
+
 - Un conteneur par service : `mongodb`, `api`, `worker` (même image, `node dist/worker.js`) côté back via `compose.prod.yaml` ; le front en application Dockerfile séparée (son `Dockerfile` nginx actuel convient tel quel).
 - Deux domaines : `https://<domaine>` (front) et `https://api.<domaine>` (back). Le front se build avec `VITE_API_BASE_URL=https://api.<domaine>/api` ; le back autorise l'origine du front (`CORS_ORIGIN`). Guide complet : `docs/DEPLOY.md`.
 - Rien à changer dans le code du front. A noter : `nginx.conf` n'a pas de `location /api`, ce qui est normal avec deux domaines.

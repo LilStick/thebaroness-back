@@ -11,29 +11,33 @@ Un conteneur par service :
 
 Topologie retenue : **deux domaines** (front et `api.`), CORS activé côté back. Aucun changement de code dans le front : l'URL de l'API est fixée au build par `VITE_API_BASE_URL`.
 
-## 1. Back : ressource « Docker Compose »
+## 1. Back : ressource « Docker Compose » (Coolify v3.12)
 
-1. New Resource > Docker Compose > dépôt `LilStick/thebaroness-back`, branche `main`.
-2. Docker Compose Location : `/compose.prod.yaml`.
-3. Domaine du service `api` : `https://api.<domaine>:3001` (le `:3001` indique à Coolify le port interne ; ne rien mettre sur `mongodb` et `worker`).
-4. Variables d'environnement (onglet Environment Variables) :
+Production actuelle : `https://api.thebaroness.4esport.fr` (front prévu sur `https://thebaroness.4esport.fr`).
 
-| Variable                            | Obligatoire | Exemple / défaut                                            |
+1. New Resource > Docker Compose > dépôt `lilstick/thebaroness-back` (public), branche `main`, Build Pack **Compose**.
+2. Configuration > Docker Compose File Location : `/compose.prod.yaml`, puis **Reload Docker Compose File**.
+3. Bloc **API** : URL (FQDN) `https://api.<domaine>`, Port `3001`. Blocs MONGODB et WORKER : vides. Ces champs ne sont modifiables que ressource arrêtée : Stop, saisir, Save, Deploy. **Sans FQDN, Traefik répond `404 page not found` avec son certificat par défaut.**
+4. **Secrets** (« Need during buildtime » désactivé partout) :
+
+| Secret                              | Obligatoire | Exemple / défaut                                            |
 | ----------------------------------- | ----------- | ----------------------------------------------------------- |
-| `JWT_SECRET`                        | oui         | 64 caractères aléatoires (`openssl rand -hex 32`), secret   |
-| `API_PUBLIC_URL`                    | oui         | `https://api.<domaine>` (sans `/api` ; realm OpenID Steam)  |
-| `FRONT_URL`                         | oui         | `https://<domaine>` (retour après connexion Steam)          |
+| `JWT_SECRET`                        | oui         | `openssl rand -hex 32`                                      |
+| `API_PUBLIC_URL`                    | oui         | `https://api.<domaine>` (sans `/api` ni slash final)        |
+| `FRONT_URL`                         | oui         | `https://<domaine>`                                         |
 | `CORS_ORIGIN`                       | oui         | `https://<domaine>` (plusieurs : séparées par des virgules) |
 | `TRUST_PROXY`                       | non         | `1` (Traefik) ; `2` si Cloudflare proxifie aussi le domaine |
-| `DEADLOCK_API_KEY`                  | non         | vide                                                        |
+| `DEADLOCK_API_KEY`                  | non         | ne pas créer si vide                                        |
 | `REFRESH_INTERVAL_MS`               | non         | `300000` (minimum `60000`)                                  |
 | `JWT_EXPIRES_IN`                    | non         | `15m`                                                       |
 | `AUTH_RATE_LIMIT`, `API_RATE_LIMIT` | non         | `60`, `300`                                                 |
 | `LOG_LEVEL`                         | non         | `info`                                                      |
 
-5. Deploy. Vérifications : `https://api.<domaine>/api/health` renvoie `{"status":"ok"}` ; les trois conteneurs sont `healthy` (le worker l'est dès son premier cycle) ; dans les logs du worker, une ligne `Cycle de préchauffage terminé` toutes les 5 min.
+**Ne pas créer** `MONGODB_URI`, `PORT`, `NODE_ENV` ni `REFRESH_WORKER_ENABLED` : Coolify v3 injecte les Secrets (et `NODE_ENV`, `PORT`) dans l'`environment` de chaque service, et une clé déjà présente dans le compose fait échouer le `docker compose pull` (`environment array items[x,y] must be unique`). Pour la même raison, le compose n'utilise pas `${VAR:?}` (le pull se fait sans les Secrets).
 
-MongoDB n'est jamais exposé. Sauvegarde : tâche planifiée Coolify sur le volume, ou `docker exec <mongodb> mongodump --archive > backup.archive`.
+5. Deploy. Vérifications : `https://api.<domaine>/api/health` renvoie `{"status":"ok"}` avec un certificat Let's Encrypt ; les trois services sont RUNNING ; dans les logs du worker, une ligne `Cycle de préchauffage terminé` toutes les 5 min.
+
+MongoDB n'est jamais exposé. Sauvegarde : `docker exec <conteneur mongodb> mongodump --archive > backup.archive`.
 
 ## 2. Front : application « Dockerfile »
 
