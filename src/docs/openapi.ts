@@ -5,7 +5,7 @@ import type { OpenAPIV3_1 as O } from 'openapi-types';
  * Servi sur /api/openapi.json et /api/docs ; exporté dans docs/openapi.yaml (`npm run openapi`).
  * Versionnement : majeure = changement incompatible, mineure = ajout, patch = correction.
  */
-export const OPENAPI_VERSION = '1.6.0';
+export const OPENAPI_VERSION = '1.7.0';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const response = (name: string) => ({ $ref: `#/components/responses/${name}` });
@@ -27,6 +27,31 @@ const steamIdInput: O.SchemaObject = {
     '997050782',
     'https://steamcommunity.com/profiles/76561198957316510',
   ],
+};
+
+/** Type de partie (`match_mode` de Deadlock API). */
+const matchModeSchema: O.SchemaObject = {
+  type: ['string', 'null'],
+  enum: [
+    'unranked',
+    'private_lobby',
+    'coop_bot',
+    'ranked',
+    'server_test',
+    'tutorial',
+    'hero_labs',
+    'new_player_placement',
+    null,
+  ],
+  description:
+    'Type de partie : `unranked` (partie normale), `ranked` (classée), `private_lobby`, `coop_bot` (contre des bots), `hero_labs`, `tutorial`, `new_player_placement`, `server_test`. null si inconnu.',
+};
+
+/** Mode de jeu (`game_mode` de Deadlock API). */
+const gameModeSchema: O.SchemaObject = {
+  type: ['string', 'null'],
+  enum: ['normal', '1v1_test', 'sandbox', 'street_brawl', 'explore_nyc', null],
+  description: 'Mode de jeu : `normal` (6 contre 6), `street_brawl`, `sandbox`… null si inconnu.',
 };
 
 const steamIdParam: O.ParameterObject = {
@@ -1138,7 +1163,7 @@ export const openApiDocument: O.Document = {
           }),
           badge: {
             description:
-              'Toujours null : Deadlock API ne fournit pas le rang par joueur dans le classement.',
+              'Rang à la fin de la dernière partie classée (`/v1/players/rank`), seulement si `steamId` est connu (pseudo relié à un compte unique). null si le pseudo est ambigu, si le joueur n’a pas de rang connu, ou si la source des rangs est indisponible (`meta.isPartial`).',
             oneOf: [
               { type: 'null' },
               {
@@ -1201,11 +1226,21 @@ export const openApiDocument: O.Document = {
       },
       MatchDetail: {
         type: 'object',
-        required: ['matchId', 'playedAt', 'durationSeconds', 'winningSide', 'teams'],
+        required: [
+          'matchId',
+          'playedAt',
+          'durationSeconds',
+          'matchMode',
+          'gameMode',
+          'winningSide',
+          'teams',
+        ],
         properties: {
           matchId: { type: 'string' },
           playedAt: nullable('string', { format: 'date-time' }),
           durationSeconds: nullable('integer'),
+          matchMode: matchModeSchema,
+          gameMode: gameModeSchema,
           winningSide: { type: ['string', 'null'], enum: ['amber', 'sapphire', null] },
           teams: {
             type: 'array',
@@ -1248,6 +1283,8 @@ export const openApiDocument: O.Document = {
           'deaths',
           'assists',
           'netWorth',
+          'matchMode',
+          'gameMode',
         ],
         properties: {
           matchId: { type: 'string' },
@@ -1264,6 +1301,8 @@ export const openApiDocument: O.Document = {
           deaths: nullable('integer'),
           assists: nullable('integer'),
           netWorth: nullable('integer'),
+          matchMode: matchModeSchema,
+          gameMode: gameModeSchema,
         },
       },
       MatchPage: {

@@ -19,6 +19,7 @@ import {
   type RawMatchMetadata,
   type RawRankAsset,
   type RawSteamProfile,
+  playerRanksSchema,
 } from './deadlock.schemas';
 
 /** Résumé de joueur normalisé (§19.4 A) : aucun champ brut de Deadlock API ne sort d'ici. */
@@ -103,6 +104,22 @@ export function createDeadlockApi(client: DeadlockClient) {
         steamProfilesSchema,
       );
       return (raw ?? []).map(toPlayerSummary);
+    },
+
+    /**
+     * `GET /v1/players/rank` en lot (≤ 1000 comptes) : badge (`tier * 10 + subrank`) par compte,
+     * seulement pour les comptes qui ont un rang connu.
+     */
+    async getPlayerBadges(accountIds: number[]): Promise<Map<number, number>> {
+      if (accountIds.length === 0) return new Map();
+      const raw = await client.get(
+        '/v1/players/rank',
+        { account_ids: [...new Set(accountIds)].sort((a, b) => a - b).join(',') },
+        playerRanksSchema,
+      );
+      return new Map(
+        (raw ?? []).flatMap((r) => (r.badge ? [[r.account_id, r.badge] as const] : [])),
+      );
     },
 
     /** `GET /v1/leaderboard/{region}` : classement de la saison courante (mis à jour chaque heure). */

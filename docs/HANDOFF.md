@@ -7,12 +7,30 @@ Dernière mise à jour : 16/11/2026 (voir `git log -- docs/HANDOFF.md` pour le S
 
 ## A lire en premier
 
-- **URGENT (prod cassée) : corriger le `Dockerfile` du front, voir la section « Demande urgente » juste en dessous.**
+- Production : front `https://thebaroness.4esport.fr` et back `https://api.thebaroness.4esport.fr` communiquent (correctif du `Dockerfile` front vérifié en ligne le 16/11).
+- **Nouvelles demandes : section « Demandes au front (v1.7.0) » juste en dessous.**
 
-- **Tout ce que le front attend est livré et testé.** Contrat de référence : `docs/openapi.yaml` **v1.6.0** (aussi sur `http://localhost:3001/api/docs`). A recopier dans `src/contracts/openapi.yaml`.
+- **Tout ce que le front attend est livré et testé.** Contrat de référence : `docs/openapi.yaml` **v1.7.0** (aussi sur `http://localhost:3001/api/docs`). A recopier dans `src/contracts/openapi.yaml`.
 - Dépôt GitHub `LilStick/thebaroness-back` (l'ancienne URL `deadlock-tracker-back` redirige ; le nom du dossier local n'a pas d'importance).
 
-## Demande urgente au front (16/11/2026) : `VITE_API_BASE_URL` ignorée au build Coolify
+## Demandes au front (v1.7.0, 16/11/2026)
+
+1. **Type de partie dans l'historique** (demande de LilStick) : `MatchSummary` (`GET /players/{steamId}/matches`) et `MatchDetail` (`GET /matches/{matchId}`) ont deux nouveaux champs :
+   - `matchMode` : `unranked` (partie normale), `ranked` (classée), `private_lobby`, `coop_bot`, `hero_labs`, `tutorial`, `new_player_placement`, `server_test`, ou `null` ;
+   - `gameMode` : `normal` (6 contre 6), `street_brawl`, `sandbox`, `1v1_test`, `explore_nyc`, ou `null`.
+
+   Merci d'afficher une petite pastille par partie, par exemple « Classée », « Normale », « Street Brawl », « Lobby privé », « Contre bots », « Hero Labs » (`null` : rien ou « n/d »). Ordre de grandeur réel (FunKa) : 487 normales, 49 classées, 3 Street Brawl. Exemple : `{ "matchId": "136927164", ..., "matchMode": "unranked", "gameMode": "normal" }`.
+
+2. **Rang dans le classement** : `LeaderboardEntry.badge` n'est plus toujours `null`. Le back le remplit (`{ tier, subrank, name, imageUrl }`) pour chaque entrée dont `steamId` est connu, via le rang de la dernière partie classée (environ 56 sur 57 comptes univoques du top 100 Europe). Il reste `null` quand le pseudo est ambigu (`steamId: null`, 43 entrées sur 100, dont les **n°1 et n°2** : « MikaelS » correspond à 11 comptes possibles et « sai » à 98) ou sans rang connu. Garder « Rang non communiqué » pour ces cas.
+3. **Nettoyer `docs/HANDOFF.md` du front**, plusieurs sections sont périmées :
+   - « Décision à appliquer côté back : données de jeu en anglais » : fait (commit back `dfd5102`) ;
+   - tableau « Ce que le front attend encore du back » : compare livré (`db4f09e`), anglais fait, routes P1 branchées ;
+   - « Le front a recopié le contrat OpenAPI v1.3.0 » : contrat actuel **v1.7.0** ;
+   - « Demande au back, prioritaire : héros manquants » : fait (issue #71, 44 héros, Violet et Baba inclus) ;
+   - « Mise en route » : ajouter les URL de production.
+4. Recopier `docs/openapi.yaml` v1.7.0 dans `src/contracts/openapi.yaml`.
+
+## Fait : demande urgente au front (16/11/2026) : `VITE_API_BASE_URL` ignorée au build Coolify
 
 **Symptôme en production** : `https://thebaroness.4esport.fr` ne parle pas au back. Le JavaScript déployé contient ``c=`/api` `` : le front appelle `https://thebaroness.4esport.fr/api/...`, nginx répond `index.html` (200 `text/html`) et le JSON échoue. Le back est sain : `https://api.thebaroness.4esport.fr/api/health` répond `{"status":"ok"}` et autorise l'origine `https://thebaroness.4esport.fr` en CORS.
 
@@ -135,6 +153,8 @@ npm run dev             # proxy Vite /api vers http://localhost:3001
 Les routes catalogue et joueurs interrogent la vraie API Deadlock : prévoir une connexion internet. En cas de limitation par la source, les réponses passent en `isStale` ou `isPartial`, ou en 503 avec `Retry-After`.
 
 ## Journal des changements de contrat (du plus récent au plus ancien)
+
+- 16/11/2026 : **v1.7.0** : `matchMode` et `gameMode` dans `MatchSummary` et `MatchDetail` ; `LeaderboardEntry.badge` rempli pour les comptes univoques. Ajouts rétrocompatibles.
 
 - 16/11/2026 : héros récents inclus (issue #71) : `in_development` n'exclut plus un héros publié ; Violet (86) et Baba (88) apparaissent, 44 héros. Cache du catalogue invalidé au déploiement. Forme inchangée.
 

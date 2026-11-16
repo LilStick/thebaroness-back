@@ -1,3 +1,9 @@
+import {
+  type GameMode,
+  type MatchMode,
+  toGameMode,
+  toMatchMode,
+} from '../../integrations/deadlock/game-modes';
 import { cached, type Cached } from '../../database/api-cache';
 import type {
   DeadlockApi,
@@ -61,6 +67,10 @@ export interface MatchSummary {
   deaths: number | null;
   assists: number | null;
   netWorth: number | null;
+  /** Type de partie (`ranked`, `unranked`, `private_lobby`…), null si inconnu. */
+  matchMode: MatchMode | null;
+  /** Mode de jeu (`normal`, `street_brawl`…), null si inconnu. */
+  gameMode: GameMode | null;
 }
 
 /**
@@ -79,6 +89,9 @@ export interface StoredMatch {
   netWorth: number | null;
   /** `ranked_display_badge` (tier * 10 + subrank) en partie classée, sinon `null`. */
   badge: number | null;
+  /** Absents des copies en cache antérieures à leur ajout : lire avec `?? null`. */
+  matchMode?: MatchMode | null;
+  gameMode?: GameMode | null;
 }
 
 const NULL_STATS: PlayerStats = {
@@ -108,6 +121,8 @@ function toStoredMatches(entries: RawMatchHistoryEntry[]): StoredMatch[] {
       assists: entry.player_assists ?? null,
       netWorth: entry.net_worth ?? null,
       badge: entry.ranked_display_badge || null,
+      matchMode: toMatchMode(entry.match_mode),
+      gameMode: toGameMode(entry.game_mode),
     }))
     .sort((a, b) => b.startTime - a.startTime || Number(BigInt(b.matchId) - BigInt(a.matchId)));
 }
@@ -273,6 +288,8 @@ export function createPlayersService(deadlock: DeadlockApi, catalog: CatalogServ
           deaths: m.deaths,
           assists: m.assists,
           netWorth: m.netWorth,
+          matchMode: m.matchMode ?? null,
+          gameMode: m.gameMode ?? null,
         })),
         nextCursor: hasMore && last ? encodeCursor(last) : null,
         meta: meta(heroes ? [history, heroes] : [history], { isPartial: !heroes }),

@@ -1,9 +1,9 @@
-# Généré depuis src/docs/openapi.ts (v1.6.0) par `npm run openapi`.
+# Généré depuis src/docs/openapi.ts (v1.7.0) par `npm run openapi`.
 # Ne pas modifier à la main.
 openapi: 3.1.0
 info:
   title: thebaroness API
-  version: 1.6.0
+  version: 1.7.0
   description: "API du tracker de statistiques Deadlock. Les statistiques proviennent de Deadlock API (api.deadlock-api.com, source communautaire indépendante de Valve) ; l'espace privé est stocké dans MongoDB. Erreurs : `{ \"error\": { \"code\", \"message\" } }`. Inconnu = `null`, jamais 0."
 servers:
   - url: /api
@@ -1637,7 +1637,7 @@ components:
             - "null"
           description: Seulement si la source relie le pseudo à un seul compte
         badge:
-          description: "Toujours null : Deadlock API ne fournit pas le rang par joueur dans le classement."
+          description: Rang à la fin de la dernière partie classée (`/v1/players/rank`), seulement si `steamId` est connu (pseudo relié à un compte unique). null si le pseudo est ambigu, si le joueur n’a pas de rang connu, ou si la source des rangs est indisponible (`meta.isPartial`).
           oneOf:
             - type: "null"
             - type: object
@@ -1740,6 +1740,8 @@ components:
         - matchId
         - playedAt
         - durationSeconds
+        - matchMode
+        - gameMode
         - winningSide
         - teams
       properties:
@@ -1754,6 +1756,33 @@ components:
           type:
             - integer
             - "null"
+        matchMode:
+          type:
+            - string
+            - "null"
+          enum:
+            - unranked
+            - private_lobby
+            - coop_bot
+            - ranked
+            - server_test
+            - tutorial
+            - hero_labs
+            - new_player_placement
+            - null
+          description: "Type de partie : `unranked` (partie normale), `ranked` (classée), `private_lobby`, `coop_bot` (contre des bots), `hero_labs`, `tutorial`, `new_player_placement`, `server_test`. null si inconnu."
+        gameMode:
+          type:
+            - string
+            - "null"
+          enum:
+            - normal
+            - 1v1_test
+            - sandbox
+            - street_brawl
+            - explore_nyc
+            - null
+          description: "Mode de jeu : `normal` (6 contre 6), `street_brawl`, `sandbox`… null si inconnu."
         winningSide:
           type:
             - string
@@ -1830,6 +1859,8 @@ components:
         - deaths
         - assists
         - netWorth
+        - matchMode
+        - gameMode
       properties:
         matchId:
           type: string
@@ -1871,6 +1902,33 @@ components:
           type:
             - integer
             - "null"
+        matchMode:
+          type:
+            - string
+            - "null"
+          enum:
+            - unranked
+            - private_lobby
+            - coop_bot
+            - ranked
+            - server_test
+            - tutorial
+            - hero_labs
+            - new_player_placement
+            - null
+          description: "Type de partie : `unranked` (partie normale), `ranked` (classée), `private_lobby`, `coop_bot` (contre des bots), `hero_labs`, `tutorial`, `new_player_placement`, `server_test`. null si inconnu."
+        gameMode:
+          type:
+            - string
+            - "null"
+          enum:
+            - normal
+            - 1v1_test
+            - sandbox
+            - street_brawl
+            - explore_nyc
+            - null
+          description: "Mode de jeu : `normal` (6 contre 6), `street_brawl`, `sandbox`… null si inconnu."
     MatchPage:
       type: object
       required:
