@@ -11,7 +11,9 @@ export const testEnv: Env = parseEnv({
   JWT_SECRET: 'test-secret-'.padEnd(48, 'x'),
   JWT_EXPIRES_IN: '15m',
   API_PUBLIC_URL: 'http://api.test',
-  FRONTEND_URL: 'http://front.test',
+  FRONT_URL: 'http://front.test',
+  DEADLOCK_API_BASE_URL: 'https://deadlock.test',
+  CORS_ORIGIN: 'http://front.test',
   AUTH_RATE_LIMIT: '1000',
   LOG_LEVEL: 'silent',
 });
@@ -36,6 +38,7 @@ export async function createUser(steamId = String(76561198000000000n + BigInt(++
   const user = await UserModel.create({
     _id: new Types.ObjectId(),
     steamId,
+    displayName: `Joueur ${steamId.slice(-4)}`,
     lastLoginAt: new Date(),
   });
   const userId = user._id.toHexString();

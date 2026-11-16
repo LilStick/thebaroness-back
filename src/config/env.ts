@@ -14,7 +14,7 @@ const envSchema = z.object({
   /** URL publique de l'API (sans /api), utilisée comme realm et return_to OpenID. */
   API_PUBLIC_URL: z.url().default('http://localhost:3001').transform(stripTrailingSlash),
   /** URL du front vers laquelle Steam renvoie l'utilisateur une fois authentifié. */
-  FRONTEND_URL: z.url().default('http://localhost:5173').transform(stripTrailingSlash),
+  FRONT_URL: z.url().default('http://localhost:5173').transform(stripTrailingSlash),
   /** Tentatives /api/auth/* autorisées par IP et par fenêtre de 15 min. */
   AUTH_RATE_LIMIT: z.coerce.number().int().min(1).default(60),
   CORS_ORIGIN: z

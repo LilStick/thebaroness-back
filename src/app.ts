@@ -1,6 +1,9 @@
+import cors from 'cors';
 import express, { type Express } from 'express';
 import type { Logger } from 'pino';
 import type { Env } from './config/env';
+import { createDeadlockApi } from './integrations/deadlock/deadlock.api';
+import { DeadlockClient } from './integrations/deadlock/deadlock.client';
 import { errorHandler, notFoundHandler } from './middleware/error-handler';
 import { createRateLimiter } from './middleware/rate-limit';
 import { requireAuth } from './middleware/require-auth';
@@ -25,15 +28,36 @@ export function createApp({ env, logger, fetch = globalThis.fetch }: AppDeps): E
 
   app.disable('x-powered-by');
   app.set('etag', false);
+  // Origines explicites (§13.7) ; jeton en en-tête, donc pas de cookies ni `credentials`.
+  app.use(
+    cors({
+      origin: env.CORS_ORIGIN,
+      methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+      allowedHeaders: ['Authorization', 'Content-Type'],
+      exposedHeaders: ['Retry-After'],
+      maxAge: 600,
+    }),
+  );
   app.use(express.json({ limit: '16kb' }));
+
+  const deadlock = createDeadlockApi(
+    new DeadlockClient({
+      baseUrl: env.DEADLOCK_API_BASE_URL,
+      apiKey: env.DEADLOCK_API_KEY,
+      fetch,
+      logger,
+    }),
+  );
 
   const auth = requireAuth(env.JWT_SECRET);
   const authService = createAuthService({
     secret: env.JWT_SECRET,
     expiresIn: env.JWT_EXPIRES_IN,
     apiPublicUrl: env.API_PUBLIC_URL,
-    frontendUrl: env.FRONTEND_URL,
+    frontUrl: env.FRONT_URL,
     fetch,
+    deadlock,
+    logger,
   });
 
   const api = express.Router();
