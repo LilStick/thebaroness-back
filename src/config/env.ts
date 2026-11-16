@@ -5,7 +5,13 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3001),
   MONGODB_URI: z.string().min(1),
   JWT_SECRET: z.string().min(32, 'JWT_SECRET doit contenir au moins 32 caractères'),
-  JWT_EXPIRES_IN: z.string().min(1).default('15m'),
+  JWT_EXPIRES_IN: z
+    .string()
+    .regex(/^\d+(ms|s|m|h|d)?$/, 'JWT_EXPIRES_IN attend une durée du type 15m, 1h, 3600')
+    .default('15m'),
+  BCRYPT_ROUNDS: z.coerce.number().int().min(4).max(15).default(12),
+  /** Tentatives /api/auth/* autorisées par IP et par fenêtre de 15 min. */
+  AUTH_RATE_LIMIT: z.coerce.number().int().min(1).default(20),
   CORS_ORIGIN: z
     .string()
     .default('http://localhost:5173')
