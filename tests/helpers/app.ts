@@ -1,37 +1,44 @@
 import pino from 'pino';
-import request from 'supertest';
-import type { Express } from 'express';
+import { Types } from 'mongoose';
 import { createApp } from '../../src/app';
 import { parseEnv, type Env } from '../../src/config/env';
+import { signAccessToken } from '../../src/modules/auth/jwt';
+import { UserModel } from '../../src/modules/auth/user.model';
 
 export const testEnv: Env = parseEnv({
   NODE_ENV: 'test',
   MONGODB_URI: 'mongodb://127.0.0.1:27017/unused',
   JWT_SECRET: 'test-secret-'.padEnd(48, 'x'),
   JWT_EXPIRES_IN: '15m',
-  BCRYPT_ROUNDS: '4',
+  API_PUBLIC_URL: 'http://api.test',
+  FRONTEND_URL: 'http://front.test',
   AUTH_RATE_LIMIT: '1000',
   LOG_LEVEL: 'silent',
 });
 
 export const silentLogger = pino({ level: 'silent' });
 
-export function buildTestApp(overrides: Partial<Env> = {}) {
-  return createApp({ env: { ...testEnv, ...overrides }, logger: silentLogger });
+export function buildTestApp(overrides: Partial<Env> = {}, fetchImpl?: typeof fetch) {
+  return createApp({
+    env: { ...testEnv, ...overrides },
+    logger: silentLogger,
+    fetch: fetchImpl ?? (() => Promise.reject(new Error('fetch non mocké dans ce test'))),
+  });
 }
 
 let counter = 0;
 
-/** Inscrit un compte de test et renvoie son jeton et son identifiant. */
-export async function registerUser(app: Express, email = `user${++counter}@example.test`) {
-  const res = await request(app)
-    .post('/api/auth/register')
-    .send({ email, password: 'MotDePasse123!' })
-    .expect(201);
-  return {
-    token: res.body.token as string,
-    userId: res.body.user.id as string,
-    email,
-    auth: { Authorization: `Bearer ${res.body.token as string}` },
-  };
+/**
+ * Crée directement un utilisateur en base (comme après une connexion Steam réussie)
+ * et renvoie un JWT valide pour lui.
+ */
+export async function createUser(steamId = String(76561198000000000n + BigInt(++counter))) {
+  const user = await UserModel.create({
+    _id: new Types.ObjectId(),
+    steamId,
+    lastLoginAt: new Date(),
+  });
+  const userId = user._id.toHexString();
+  const token = signAccessToken(userId, { secret: testEnv.JWT_SECRET, expiresIn: '15m' });
+  return { userId, steamId, token, auth: { Authorization: `Bearer ${token}` } };
 }

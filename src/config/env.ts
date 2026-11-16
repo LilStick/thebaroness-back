@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+const stripTrailingSlash = (url: string) => url.replace(/\/+$/, '');
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().min(1).max(65535).default(3001),
@@ -9,9 +11,12 @@ const envSchema = z.object({
     .string()
     .regex(/^\d+(ms|s|m|h|d)?$/, 'JWT_EXPIRES_IN attend une durée du type 15m, 1h, 3600')
     .default('15m'),
-  BCRYPT_ROUNDS: z.coerce.number().int().min(4).max(15).default(12),
+  /** URL publique de l'API (sans /api), utilisée comme realm et return_to OpenID. */
+  API_PUBLIC_URL: z.url().default('http://localhost:3001').transform(stripTrailingSlash),
+  /** URL du front vers laquelle Steam renvoie l'utilisateur une fois authentifié. */
+  FRONTEND_URL: z.url().default('http://localhost:5173').transform(stripTrailingSlash),
   /** Tentatives /api/auth/* autorisées par IP et par fenêtre de 15 min. */
-  AUTH_RATE_LIMIT: z.coerce.number().int().min(1).default(20),
+  AUTH_RATE_LIMIT: z.coerce.number().int().min(1).default(60),
   CORS_ORIGIN: z
     .string()
     .default('http://localhost:5173')

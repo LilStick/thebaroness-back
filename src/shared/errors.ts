@@ -2,7 +2,6 @@ export type ErrorCode =
   | 'INVALID_INPUT'
   | 'UNAUTHORIZED'
   | 'NOT_FOUND'
-  | 'EMAIL_ALREADY_USED'
   | 'ALREADY_TRACKED'
   | 'RATE_LIMITED'
   | 'INTERNAL_ERROR'
