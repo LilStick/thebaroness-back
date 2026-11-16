@@ -39,6 +39,12 @@ Retour de l'utilisateur : pour créer un groupe (et suivre un joueur), il faut s
    - Désactiver le bouton pendant la requête et environ 60 s après (le back renverrait de toute façon la même copie).
    - Facultatif : rafraîchissement automatique (`refetchInterval` de 2 à 3 min, et au retour sur l'onglet) sur ces deux pages, via les routes `GET` habituelles.
 
+## Worker de préchauffage (16/11/2026, issue #58)
+
+- Toutes les 5 min (`REFRESH_INTERVAL_MS`, minimum 60 000), le back actualise le cache (profil Steam et historique) de **tous les joueurs suivis et membres de groupes**, tous comptes confondus, 2 à la fois. Une copie encore fraîche ne coûte aucun appel ; le cycle s'arrête si Deadlock API est limitée ou en panne.
+- Effet pour le front : profils et comparaisons de ces joueurs s'ouvrent sans attendre Deadlock API, avec des données de moins de 5 min environ. Aucune route ni forme modifiée.
+- Variables : `REFRESH_WORKER_ENABLED=true|false` (actif par défaut), `REFRESH_INTERVAL_MS=300000`. Voir `.env.example`.
+
 ## Etat des routes
 
 | Route                                                                                                                                         | Etat                      | Note                                                                                                                     |
@@ -91,6 +97,8 @@ npm run dev             # proxy Vite /api vers http://localhost:3001
 Les routes catalogue et joueurs interrogent la vraie API Deadlock : prévoir une connexion internet. En cas de limitation par la source, les réponses passent en `isStale` ou `isPartial`, ou en 503 avec `Retry-After`.
 
 ## Journal des changements de contrat (du plus récent au plus ancien)
+
+- 16/11/2026 : worker de préchauffage (issue #58), nouvelles variables `REFRESH_WORKER_ENABLED` et `REFRESH_INTERVAL_MS`. Contrat HTTP inchangé (v1.6.0).
 
 - 16/11/2026 : **v1.6.0** (issue #57) : `POST /players/{steamId}/refresh` et `POST /groups/{id}/refresh` (refresh forcé, délai minimum de 60 s par joueur). Rétrocompatible.
 

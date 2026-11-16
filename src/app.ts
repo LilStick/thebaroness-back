@@ -28,13 +28,41 @@ export interface AppDeps {
   logger: Logger;
   /** Client HTTP sortant (Steam, Deadlock API) ; injectable pour les tests. */
   fetch?: typeof fetch;
+  /** Services partagés avec les tâches de fond (même client, même déduplication). */
+  services?: Services;
 }
+
+/** Services métier adossés à Deadlock API, partagés entre l'API HTTP et le worker. */
+export function createServices({
+  env,
+  logger,
+  fetch = globalThis.fetch,
+}: Pick<AppDeps, 'env' | 'logger' | 'fetch'>) {
+  const deadlock = createDeadlockApi(
+    new DeadlockClient({
+      baseUrl: env.DEADLOCK_API_BASE_URL,
+      apiKey: env.DEADLOCK_API_KEY,
+      fetch,
+      logger,
+    }),
+  );
+  const catalog = createCatalogService(deadlock);
+  const players = createPlayersService(deadlock, catalog);
+  return { deadlock, catalog, players };
+}
+
+export type Services = ReturnType<typeof createServices>;
 
 /**
  * Construit l'application Express sans ouvrir de port,
  * pour pouvoir l'importer telle quelle dans les tests Supertest.
  */
-export function createApp({ env, logger, fetch = globalThis.fetch }: AppDeps): Express {
+export function createApp({
+  env,
+  logger,
+  fetch = globalThis.fetch,
+  services = createServices({ env, logger, fetch }),
+}: AppDeps): Express {
   const app = express();
 
   app.disable('x-powered-by');
@@ -61,15 +89,7 @@ export function createApp({ env, logger, fetch = globalThis.fetch }: AppDeps): E
   );
   app.use(express.json({ limit: '16kb' }));
 
-  const deadlock = createDeadlockApi(
-    new DeadlockClient({
-      baseUrl: env.DEADLOCK_API_BASE_URL,
-      apiKey: env.DEADLOCK_API_KEY,
-      fetch,
-      logger,
-    }),
-  );
-
+  const { deadlock, catalog, players } = services;
   const auth = requireAuth(env.JWT_SECRET);
   const authService = createAuthService({
     secret: env.JWT_SECRET,
@@ -92,10 +112,8 @@ export function createApp({ env, logger, fetch = globalThis.fetch }: AppDeps): E
     createAuthRouter(authService, auth),
   );
   api.use('/tracked-players', createTrackedPlayerRouter(auth));
-  const catalog = createCatalogService(deadlock);
   api.use(createCatalogRouter(catalog));
   api.use(createMetaRouter(createMetaService(deadlock, catalog)));
-  const players = createPlayersService(deadlock, catalog);
   api.use('/players', createPlayersRouter(players));
   api.use('/groups', createGroupRouter(auth, createGroupCompareService(players, catalog)));
 
