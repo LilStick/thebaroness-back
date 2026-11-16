@@ -70,6 +70,9 @@ const HEROES = [
   rawHero(1, 'Infernus', { hero_type: 'mystic', items: {} }),
   rawHero(50, 'Prototype', { in_development: true, development_state: 'testing' }),
   rawHero(51, 'Retiré', { player_selectable: false }),
+  // Héros récent : encore marqué in_development mais publié et jouable.
+  rawHero(86, 'Violet', { in_development: true }),
+  rawHero(52, 'Désactivé', { disabled: true }),
 ];
 
 const RANKS = [
@@ -110,7 +113,11 @@ describe('Catalogue', () => {
     it('héros jouables uniquement, triés par nom, au format HeroSummary', async () => {
       const res = await request(app).get('/api/heroes');
       expect(res.status).toBe(200);
-      expect(res.body.items.map((h: { name: string }) => h.name)).toEqual(['Abrams', 'Infernus']);
+      expect(res.body.items.map((h: { name: string }) => h.name)).toEqual([
+        'Abrams',
+        'Infernus',
+        'Violet',
+      ]);
       expect(res.body.items[0]).toStrictEqual({
         id: 6,
         name: 'Abrams',

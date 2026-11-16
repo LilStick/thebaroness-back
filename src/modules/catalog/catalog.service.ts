@@ -37,7 +37,8 @@ export const dataMeta = (source: Pick<Cached<unknown>, 'fetchedAt' | 'isStale'>)
 
 export function createCatalogService(deadlock: DeadlockApi) {
   const heroCatalog = () =>
-    cached<HeroCatalog>('catalog:heroes:en', { ttlMs: CATALOG_TTL }, async () => {
+    // Clé versionnée : à incrémenter quand le filtre ou la forme du catalogue change (cache 24 h).
+    cached<HeroCatalog>('catalog:heroes:en:v2', { ttlMs: CATALOG_TTL }, async () => {
       const [heroes, abilities] = await Promise.all([
         deadlock.getHeroes(),
         deadlock.getAbilities(),

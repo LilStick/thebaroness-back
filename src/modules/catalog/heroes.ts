@@ -94,12 +94,12 @@ export function stripHtml(value: string | null | undefined): string {
 const firstImage = (images: RawHero['images'], ...keys: string[]) =>
   keys.map((key) => images[key]).find((value): value is string => Boolean(value)) ?? null;
 
-/** Héros jouable et publié. */
+/**
+ * Héros jouable et publié. `in_development` n'est pas testé : les héros récents (Violet, Baba)
+ * le gardent à `true` alors qu'ils sont jouables (`development_state: 'release'`).
+ */
 export const isPlayableHero = (hero: RawHero) =>
-  Boolean(hero.player_selectable) &&
-  !hero.disabled &&
-  !hero.in_development &&
-  hero.development_state === 'release';
+  Boolean(hero.player_selectable) && !hero.disabled && hero.development_state === 'release';
 
 export const heroSmallImage = (hero: RawHero) =>
   firstImage(hero.images, 'icon_image_small_webp', 'icon_image_small');
