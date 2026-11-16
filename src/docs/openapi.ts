@@ -5,7 +5,7 @@ import type { OpenAPIV3_1 as O } from 'openapi-types';
  * Servi sur /api/openapi.json et /api/docs ; exporté dans docs/openapi.yaml (`npm run openapi`).
  * Versionnement : majeure = changement incompatible, mineure = ajout, patch = correction.
  */
-export const OPENAPI_VERSION = '1.1.0';
+export const OPENAPI_VERSION = '1.2.0';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const response = (name: string) => ({ $ref: `#/components/responses/${name}` });
@@ -70,6 +70,7 @@ export const openApiDocument: O.Document = {
     { name: 'Authentification', description: 'Connexion Steam OpenID uniquement.' },
     { name: 'Joueurs', description: 'Données publiques issues de Deadlock API, avec cache.' },
     { name: 'Suivis', description: 'Liste privée de joueurs suivis (Bearer JWT).' },
+    { name: 'Catalogue', description: 'Héros, rangs, carte (assets Deadlock, en français).' },
   ],
   paths: {
     '/health': {
@@ -231,6 +232,100 @@ export const openApiDocument: O.Document = {
           '404': response('NotFound'),
           '429': response('RateLimited'),
           '502': response('UpstreamError'),
+          '503': response('ServiceUnavailable'),
+        },
+      },
+    },
+
+    '/heroes': {
+      get: {
+        tags: ['Catalogue'],
+        summary: 'Héros jouables',
+        description: 'Textes en français, triés par nom. Cache 24 h.',
+        responses: {
+          '200': {
+            description: 'Catalogue',
+            content: json({
+              type: 'object',
+              required: ['items', 'meta'],
+              properties: {
+                items: { type: 'array', items: ref('HeroSummary') },
+                meta: ref('DataMeta'),
+              },
+            }),
+          },
+          '429': response('RateLimited'),
+          '502': response('UpstreamError'),
+          '503': response('ServiceUnavailable'),
+        },
+      },
+    },
+    '/heroes/{heroId}': {
+      get: {
+        tags: ['Catalogue'],
+        summary: "Détail d'un héros",
+        parameters: [
+          {
+            name: 'heroId',
+            in: 'path',
+            required: true,
+            schema: { type: 'integer', minimum: 1 },
+            example: 6,
+          },
+        ],
+        responses: {
+          '200': {
+            description: 'Héros',
+            content: json({
+              type: 'object',
+              required: ['hero', 'meta'],
+              properties: { hero: ref('HeroDetail'), meta: ref('DataMeta') },
+            }),
+          },
+          '400': response('BadRequest'),
+          '404': response('NotFound'),
+          '429': response('RateLimited'),
+          '502': response('UpstreamError'),
+          '503': response('ServiceUnavailable'),
+        },
+      },
+    },
+    '/ranks': {
+      get: {
+        tags: ['Catalogue'],
+        summary: 'Paliers de rang (0 à 11)',
+        responses: {
+          '200': {
+            description: 'Paliers, sans meta',
+            content: json({
+              type: 'object',
+              required: ['items'],
+              properties: { items: { type: 'array', items: ref('RankTier') } },
+            }),
+          },
+          '429': response('RateLimited'),
+          '503': response('ServiceUnavailable'),
+        },
+      },
+    },
+    '/map': {
+      get: {
+        tags: ['Catalogue'],
+        summary: 'Images de la carte',
+        responses: {
+          '200': {
+            description: 'URLs, sans meta',
+            content: json({
+              type: 'object',
+              required: ['minimap', 'tunnels', 'frame'],
+              properties: {
+                minimap: { type: 'string' },
+                tunnels: nullable('string'),
+                frame: nullable('string'),
+              },
+            }),
+          },
+          '429': response('RateLimited'),
           '503': response('ServiceUnavailable'),
         },
       },
@@ -482,13 +577,105 @@ export const openApiDocument: O.Document = {
             ],
           },
           stats: ref('PlayerStats'),
-          rank: {
-            type: 'object',
-            required: ['badgeId', 'name'],
-            properties: { badgeId: nullable('integer'), name: nullable('string') },
-          },
+          rank: ref('PlayerRank'),
           meta: ref('DataMeta'),
         },
+      },
+      PlayerRank: {
+        type: 'object',
+        description:
+          'Rang issu de la partie classée la plus récente (`ranked_display_badge`). ' +
+          'Tout à `null` si aucune partie classée connue.',
+        required: ['badgeId', 'name', 'tier', 'subrank', 'imageUrl', 'color'],
+        properties: {
+          badgeId: nullable('integer', { description: '`tier * 10 + subrank` (ex. 113)' }),
+          name: nullable('string', { example: 'Éternus 3' }),
+          tier: nullable('integer', { minimum: 0, maximum: 11 }),
+          subrank: nullable('integer', { minimum: 1, maximum: 6 }),
+          imageUrl: nullable('string', { format: 'uri' }),
+          color: nullable('string', { example: '#5CE9A9' }),
+        },
+      },
+      RankTier: {
+        type: 'object',
+        required: ['tier', 'name', 'color', 'imageUrl', 'subranks'],
+        properties: {
+          tier: { type: 'integer', minimum: 0, maximum: 11 },
+          name: { type: 'string', example: 'Éternus' },
+          color: { type: 'string' },
+          imageUrl: { type: 'string', format: 'uri' },
+          subranks: {
+            type: 'array',
+            minItems: 6,
+            maxItems: 6,
+            description: 'Images des sous-rangs 1 à 6 (index 0 = sous-rang 1)',
+            items: nullable('string', { format: 'uri' }),
+          },
+        },
+      },
+      HeroImages: {
+        type: 'object',
+        required: ['card', 'small', 'vertical', 'background', 'name'],
+        properties: {
+          card: { type: 'string' },
+          small: { type: 'string' },
+          vertical: { type: 'string' },
+          background: { type: 'string' },
+          name: nullable('string'),
+        },
+      },
+      HeroSummary: {
+        type: 'object',
+        required: ['id', 'name', 'role', 'gunTag', 'complexity', 'tags', 'color', 'images'],
+        properties: {
+          id: { type: 'integer' },
+          name: { type: 'string' },
+          role: { type: 'string', enum: ['assassin', 'brawler', 'marksman', 'mystic', 'healer'] },
+          gunTag: nullable('string'),
+          complexity: nullable('integer'),
+          tags: { type: 'array', items: { type: 'string' } },
+          color: { type: 'string', description: 'Couleur d’accent hexadécimale' },
+          images: ref('HeroImages'),
+        },
+      },
+      HeroDetail: {
+        allOf: [
+          ref('HeroSummary'),
+          {
+            type: 'object',
+            required: ['lore', 'stats', 'abilities'],
+            properties: {
+              lore: { type: 'string' },
+              stats: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  required: ['key', 'label', 'value'],
+                  properties: {
+                    key: { type: 'string' },
+                    label: { type: 'string' },
+                    value: { type: 'number' },
+                  },
+                },
+              },
+              abilities: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  required: ['id', 'name', 'imageUrl', 'type', 'description', 'cooldownSeconds'],
+                  properties: {
+                    id: { type: 'integer' },
+                    name: { type: 'string' },
+                    imageUrl: nullable('string'),
+                    type: { type: 'string', enum: ['signature', 'ultimate'] },
+                    description: { type: 'string' },
+                    cooldownSeconds: nullable('number'),
+                  },
+                },
+              },
+            },
+          },
+        ],
       },
       MatchSummary: {
         type: 'object',
@@ -497,6 +684,7 @@ export const openApiDocument: O.Document = {
           'playedAt',
           'heroId',
           'heroName',
+          'heroImageUrl',
           'outcome',
           'durationSeconds',
           'kills',
@@ -512,6 +700,7 @@ export const openApiDocument: O.Document = {
             type: 'string',
             description: 'Repli `Héros #<id>` si catalogue indisponible',
           },
+          heroImageUrl: nullable('string', { description: 'Portrait (null sans catalogue)' }),
           outcome: { type: 'string', enum: ['win', 'loss'] },
           durationSeconds: nullable('integer'),
           kills: nullable('integer'),

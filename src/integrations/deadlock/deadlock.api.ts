@@ -1,10 +1,16 @@
 import { accountIdToSteamId } from '../../shared/schemas';
 import type { DeadlockClient } from './deadlock.client';
 import {
+  abilitiesSchema,
   heroesSchema,
+  mapAssetSchema,
+  type RawAbility,
+  type RawHero,
   matchHistorySchema,
+  rankAssetsSchema,
   steamProfilesSchema,
   type RawMatchHistoryEntry,
+  type RawRankAsset,
   type RawSteamProfile,
 } from './deadlock.schemas';
 
@@ -81,10 +87,30 @@ export function createDeadlockApi(client: DeadlockClient) {
       return raw ?? [];
     },
 
-    /** `GET /v1/assets/heroes` : correspondance id → nom de héros. */
-    async getHeroNames(): Promise<Record<number, string>> {
-      const raw = await client.get('/v1/assets/heroes', {}, heroesSchema);
-      return Object.fromEntries((raw ?? []).map((hero) => [hero.id, hero.name]));
+    /** `GET /v1/assets/ranks` : paliers de rang, noms en français. */
+    async getRanks(): Promise<RawRankAsset[]> {
+      return (await client.get('/v1/assets/ranks', { language: 'french' }, rankAssetsSchema)) ?? [];
+    },
+
+    /** `GET /v1/assets/map` : URLs des images de la carte. */
+    async getMapImages(): Promise<Record<string, string | null | undefined>> {
+      return (await client.get('/v1/assets/map', {}, mapAssetSchema))?.images ?? {};
+    },
+
+    /** `GET /v1/assets/heroes` : tous les héros (filtrage des jouables côté catalogue). */
+    async getHeroes(): Promise<RawHero[]> {
+      return (await client.get('/v1/assets/heroes', { language: 'french' }, heroesSchema)) ?? [];
+    },
+
+    /** `GET /v1/assets/items/by-type/ability` : capacités de tous les héros. */
+    async getAbilities(): Promise<RawAbility[]> {
+      return (
+        (await client.get(
+          '/v1/assets/items/by-type/ability',
+          { language: 'french' },
+          abilitiesSchema,
+        )) ?? []
+      );
     },
   };
 }
