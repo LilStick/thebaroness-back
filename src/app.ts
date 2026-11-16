@@ -13,6 +13,8 @@ import { createAuthRouter } from './modules/auth/auth.routes';
 import { createAuthService } from './modules/auth/auth.service';
 import { createCatalogRouter } from './modules/catalog/catalog.routes';
 import { createCatalogService } from './modules/catalog/catalog.service';
+import { createMetaRouter } from './modules/meta/meta.routes';
+import { createMetaService } from './modules/meta/meta.service';
 import { createDocsRouter } from './modules/docs/docs.routes';
 import { createGroupRouter } from './modules/groups/group.routes';
 import { healthRouter } from './modules/health/health.routes';
@@ -92,6 +94,7 @@ export function createApp({ env, logger, fetch = globalThis.fetch }: AppDeps): E
   api.use('/groups', createGroupRouter(auth));
   const catalog = createCatalogService(deadlock);
   api.use(createCatalogRouter(catalog));
+  api.use(createMetaRouter(createMetaService(deadlock, catalog)));
   api.use('/players', createPlayersRouter(createPlayersService(deadlock, catalog)));
 
   app.use('/api', api);

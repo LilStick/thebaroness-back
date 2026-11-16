@@ -2,14 +2,20 @@ import { accountIdToSteamId } from '../../shared/schemas';
 import type { DeadlockClient } from './deadlock.client';
 import {
   abilitiesSchema,
+  heroAnalyticsSchema,
   heroesSchema,
+  leaderboardSchema,
   mapAssetSchema,
-  type RawAbility,
-  type RawHero,
   matchHistorySchema,
+  matchMetadataSchema,
   rankAssetsSchema,
   steamProfilesSchema,
+  type RawAbility,
+  type RawHero,
+  type RawHeroAnalytics,
+  type RawLeaderboard,
   type RawMatchHistoryEntry,
+  type RawMatchMetadata,
   type RawRankAsset,
   type RawSteamProfile,
 } from './deadlock.schemas';
@@ -85,6 +91,41 @@ export function createDeadlockApi(client: DeadlockClient) {
         matchHistorySchema,
       );
       return raw ?? [];
+    },
+
+    /** `GET /v1/players/steam` en lot (≤ 1000 comptes) : profils connus uniquement. */
+    async getSteamProfiles(accountIds: number[]): Promise<PlayerSummary[]> {
+      if (accountIds.length === 0) return [];
+      const raw = await client.get(
+        '/v1/players/steam',
+        { account_ids: [...new Set(accountIds)].sort((a, b) => a - b).join(',') },
+        steamProfilesSchema,
+      );
+      return (raw ?? []).map(toPlayerSummary);
+    },
+
+    /** `GET /v1/leaderboard/{region}` : classement de la saison courante (mis à jour chaque heure). */
+    async getLeaderboard(region: string): Promise<RawLeaderboard['entries']> {
+      return (await client.get(`/v1/leaderboard/${region}`, {}, leaderboardSchema))?.entries ?? [];
+    },
+
+    /** `GET /v1/matches/{id}/metadata` : `null` si la partie est inconnue. */
+    async getMatchMetadata(matchId: string): Promise<RawMatchMetadata['match_info'] | null> {
+      return (
+        (await client.get(`/v1/matches/${matchId}/metadata`, {}, matchMetadataSchema))
+          ?.match_info ?? null
+      );
+    },
+
+    /** `GET /v1/analytics/hero-stats` par badge moyen, sur les 30 derniers jours (défaut source). */
+    async getHeroAnalyticsByBadge(): Promise<RawHeroAnalytics> {
+      return (
+        (await client.get(
+          '/v1/analytics/hero-stats',
+          { bucket: 'avg_badge' },
+          heroAnalyticsSchema,
+        )) ?? []
+      );
     },
 
     /** `GET /v1/assets/ranks` : paliers de rang, noms en français. */

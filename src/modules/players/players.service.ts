@@ -264,6 +264,35 @@ export function createPlayersService(deadlock: DeadlockApi, catalog: CatalogServ
         meta: meta(heroes ? [history, heroes] : [history], { isPartial: !heroes }),
       };
     },
+
+    /** Statistiques par héros sur les parties disponibles (même source que le profil). */
+    async heroes(steamId: string) {
+      const [, history, heroes] = await Promise.all([
+        requireProfile(steamId),
+        historyOf(steamIdToAccountId(steamId)),
+        catalog.heroIndex().catch(() => null),
+      ]);
+      const index = heroes?.data ?? {};
+      const byHero = new Map<number, StoredMatch[]>();
+      for (const match of history.data) {
+        byHero.set(match.heroId, [...(byHero.get(match.heroId) ?? []), match]);
+      }
+      const items = [...byHero]
+        .map(([heroId, matches]) => {
+          const stats = computeStats(matches);
+          return {
+            heroId,
+            heroName: index[heroId]?.name ?? `Héros #${heroId}`,
+            heroImageUrl: index[heroId]?.imageUrl ?? null,
+            matches: matches.length,
+            wins: stats.wins ?? 0,
+            winRate: stats.winRate,
+            kda: stats.kda,
+          };
+        })
+        .sort((a, b) => b.matches - a.matches || a.heroId - b.heroId);
+      return { items, meta: meta(heroes ? [history, heroes] : [history], { isPartial: !heroes }) };
+    },
   };
 }
 

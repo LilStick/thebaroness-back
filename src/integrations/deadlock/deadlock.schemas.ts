@@ -93,3 +93,55 @@ export const abilitySchema = z.object({
 });
 export const abilitiesSchema = z.array(abilitySchema);
 export type RawAbility = z.infer<typeof abilitySchema>;
+
+/** `GET /v1/leaderboard/{region}` : `rank` = position ; pas de badge par entrée. */
+export const leaderboardSchema = z.object({
+  entries: z.array(
+    z.object({
+      rank: z.number().int().nullish(),
+      account_name: z.string().nullish(),
+      possible_account_ids: z.array(z.number().int()).nullish(),
+      top_hero_ids: z.array(z.number().int()).nullish(),
+    }),
+  ),
+});
+export type RawLeaderboard = z.infer<typeof leaderboardSchema>;
+
+/** `GET /v1/matches/{id}/metadata` (≈ 1,3 Mo) : seuls les champs utiles sont conservés. */
+export const matchMetadataSchema = z.object({
+  match_info: z.object({
+    match_id: z.number().int().nullish(),
+    start_time: z.number().int().nullish(),
+    duration_s: z.number().int().nullish(),
+    winning_team: z.number().int().nullish(),
+    players: z.array(
+      z.object({
+        account_id: z.number().int().nullish(),
+        team: z.number().int(),
+        hero_id: z.number().int(),
+        kills: z.number().int().nullish(),
+        deaths: z.number().int().nullish(),
+        assists: z.number().int().nullish(),
+        net_worth: z.number().int().nullish(),
+        last_hits: z.number().int().nullish(),
+        denies: z.number().int().nullish(),
+        level: z.number().int().nullish(),
+      }),
+    ),
+  }),
+});
+export type RawMatchMetadata = z.infer<typeof matchMetadataSchema>;
+
+/** `GET /v1/analytics/hero-stats?bucket=avg_badge` : une ligne par (héros, badge moyen). */
+export const heroAnalyticsSchema = z.array(
+  z.object({
+    hero_id: z.number().int(),
+    bucket: z.number().int().nullish(),
+    matches: z.number().int().nonnegative(),
+    wins: z.number().int().nonnegative(),
+    total_kills: z.number().nonnegative().nullish(),
+    total_deaths: z.number().nonnegative().nullish(),
+    total_assists: z.number().nonnegative().nullish(),
+  }),
+);
+export type RawHeroAnalytics = z.infer<typeof heroAnalyticsSchema>;

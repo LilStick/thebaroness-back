@@ -1,9 +1,9 @@
-# Généré depuis src/docs/openapi.ts (v1.2.0) par `npm run openapi`.
+# Généré depuis src/docs/openapi.ts (v1.3.0) par `npm run openapi`.
 # Ne pas modifier à la main.
 openapi: 3.1.0
 info:
   title: thebaroness API
-  version: 1.2.0
+  version: 1.3.0
   description: "API du tracker de statistiques Deadlock. Les statistiques proviennent de Deadlock API (api.deadlock-api.com, source communautaire indépendante de Valve) ; l'espace privé est stocké dans MongoDB. Erreurs : `{ \"error\": { \"code\", \"message\" } }`. Inconnu = `null`, jamais 0."
 servers:
   - url: /api
@@ -335,6 +335,169 @@ paths:
                       - "null"
         "429":
           $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /heroes/{heroId}/stats:
+    get:
+      tags:
+        - Catalogue
+      summary: Statistiques méta d'un héros (30 derniers jours)
+      description: Agrégées depuis `/v1/analytics/hero-stats?bucket=avg_badge`. `winRateByTier[].winRate` vaut `null` sous 200 parties pour le palier. Cache 30 min.
+      parameters:
+        - name: heroId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Statistiques
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - stats
+                  - meta
+                properties:
+                  stats:
+                    $ref: "#/components/schemas/HeroMetaStats"
+                  meta:
+                    $ref: "#/components/schemas/DataMeta"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /leaderboard:
+    get:
+      tags:
+        - Catalogue
+      summary: Classement de la saison courante (100 premiers)
+      parameters:
+        - name: region
+          in: query
+          schema:
+            type: string
+            enum:
+              - Europe
+              - Asia
+              - NAmerica
+              - SAmerica
+              - Oceania
+            default: Europe
+      responses:
+        "200":
+          description: Classement (cache 30 min, la source se met à jour chaque heure)
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - region
+                  - items
+                  - meta
+                properties:
+                  region:
+                    type: string
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/LeaderboardEntry"
+                  meta:
+                    $ref: "#/components/schemas/DataMeta"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /matches/{matchId}:
+    get:
+      tags:
+        - Joueurs
+      summary: Détail d'une partie
+      description: Deux équipes (amber, sapphire), joueurs triés par valeur nette. Cache 7 jours.
+      parameters:
+        - name: matchId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: ^\d{1,19}$
+      responses:
+        "200":
+          description: Partie
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - match
+                  - meta
+                properties:
+                  match:
+                    $ref: "#/components/schemas/MatchDetail"
+                  meta:
+                    $ref: "#/components/schemas/DataMeta"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /players/{steamId}/heroes:
+    get:
+      tags:
+        - Joueurs
+      summary: Statistiques d'un joueur par héros
+      description: Sur les parties disponibles (même source que le profil), tri par parties.
+      parameters:
+        - name: steamId
+          in: path
+          required: true
+          description: SteamID64 (17 chiffres), toujours transmis en chaîne.
+          schema:
+            type: string
+            pattern: ^\d{17}$
+          example: "76561198957316510"
+      responses:
+        "200":
+          description: Héros joués
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - items
+                  - meta
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PlayerHeroStat"
+                  meta:
+                    $ref: "#/components/schemas/DataMeta"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
   /tracked-players:
@@ -956,6 +1119,269 @@ components:
                     type:
                       - number
                       - "null"
+    HeroMetaStats:
+      type: object
+      required:
+        - heroId
+        - matches
+        - winRate
+        - pickRate
+        - avgKills
+        - avgDeaths
+        - avgAssists
+        - winRateByTier
+      properties:
+        heroId:
+          type: integer
+        matches:
+          type:
+            - integer
+            - "null"
+        winRate:
+          type:
+            - number
+            - "null"
+          description: "%"
+        pickRate:
+          type:
+            - number
+            - "null"
+          description: "% des parties"
+        avgKills:
+          type:
+            - number
+            - "null"
+        avgDeaths:
+          type:
+            - number
+            - "null"
+        avgAssists:
+          type:
+            - number
+            - "null"
+        winRateByTier:
+          type: array
+          minItems: 12
+          maxItems: 12
+          items:
+            type: object
+            required:
+              - tier
+              - winRate
+              - matches
+            properties:
+              tier:
+                type: integer
+                minimum: 0
+                maximum: 11
+              winRate:
+                type:
+                  - number
+                  - "null"
+                description: null sous 200 parties
+              matches:
+                type:
+                  - integer
+                  - "null"
+    LeaderboardEntry:
+      type: object
+      required:
+        - rank
+        - displayName
+        - steamId
+        - badge
+        - topHeroes
+      properties:
+        rank:
+          type: integer
+          description: Position (ex aequo possibles)
+        displayName:
+          type: string
+        steamId:
+          type:
+            - string
+            - "null"
+          description: Seulement si la source relie le pseudo à un seul compte
+        badge:
+          description: "Toujours null : Deadlock API ne fournit pas le rang par joueur dans le classement."
+          oneOf:
+            - type: "null"
+            - type: object
+              required:
+                - tier
+                - subrank
+                - name
+                - imageUrl
+              properties:
+                tier:
+                  type: integer
+                subrank:
+                  type: integer
+                name:
+                  type: string
+                imageUrl:
+                  type:
+                    - string
+                    - "null"
+        topHeroes:
+          type: array
+          maxItems: 3
+          items:
+            type: object
+            required:
+              - heroId
+              - name
+              - imageUrl
+            properties:
+              heroId:
+                type: integer
+              name:
+                type: string
+              imageUrl:
+                type:
+                  - string
+                  - "null"
+    MatchPlayer:
+      type: object
+      required:
+        - steamId
+        - displayName
+        - heroId
+        - heroName
+        - heroImageUrl
+        - level
+        - kills
+        - deaths
+        - assists
+        - netWorth
+        - lastHits
+        - denies
+      properties:
+        steamId:
+          type:
+            - string
+            - "null"
+        displayName:
+          type: string
+          description: "Repli : SteamID, puis « Joueur inconnu »"
+        heroId:
+          type: integer
+        heroName:
+          type: string
+        heroImageUrl:
+          type:
+            - string
+            - "null"
+        level:
+          type:
+            - integer
+            - "null"
+        kills:
+          type:
+            - integer
+            - "null"
+        deaths:
+          type:
+            - integer
+            - "null"
+        assists:
+          type:
+            - integer
+            - "null"
+        netWorth:
+          type:
+            - integer
+            - "null"
+        lastHits:
+          type:
+            - integer
+            - "null"
+        denies:
+          type:
+            - integer
+            - "null"
+    MatchDetail:
+      type: object
+      required:
+        - matchId
+        - playedAt
+        - durationSeconds
+        - winningSide
+        - teams
+      properties:
+        matchId:
+          type: string
+        playedAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        durationSeconds:
+          type:
+            - integer
+            - "null"
+        winningSide:
+          type:
+            - string
+            - "null"
+          enum:
+            - amber
+            - sapphire
+            - null
+        teams:
+          type: array
+          items:
+            type: object
+            required:
+              - side
+              - outcome
+              - players
+            properties:
+              side:
+                type: string
+                enum:
+                  - amber
+                  - sapphire
+              outcome:
+                type: string
+                enum:
+                  - win
+                  - loss
+              players:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MatchPlayer"
+    PlayerHeroStat:
+      type: object
+      required:
+        - heroId
+        - heroName
+        - heroImageUrl
+        - matches
+        - wins
+        - winRate
+        - kda
+      properties:
+        heroId:
+          type: integer
+        heroName:
+          type: string
+        heroImageUrl:
+          type:
+            - string
+            - "null"
+        matches:
+          type: integer
+        wins:
+          type: integer
+        winRate:
+          type:
+            - number
+            - "null"
+        kda:
+          type:
+            - number
+            - "null"
     MatchSummary:
       type: object
       required:

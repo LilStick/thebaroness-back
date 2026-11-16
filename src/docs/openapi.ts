@@ -5,7 +5,7 @@ import type { OpenAPIV3_1 as O } from 'openapi-types';
  * Servi sur /api/openapi.json et /api/docs ; exporté dans docs/openapi.yaml (`npm run openapi`).
  * Versionnement : majeure = changement incompatible, mineure = ajout, patch = correction.
  */
-export const OPENAPI_VERSION = '1.2.0';
+export const OPENAPI_VERSION = '1.3.0';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const response = (name: string) => ({ $ref: `#/components/responses/${name}` });
@@ -326,6 +326,126 @@ export const openApiDocument: O.Document = {
             }),
           },
           '429': response('RateLimited'),
+          '503': response('ServiceUnavailable'),
+        },
+      },
+    },
+
+    '/heroes/{heroId}/stats': {
+      get: {
+        tags: ['Catalogue'],
+        summary: "Statistiques méta d'un héros (30 derniers jours)",
+        description:
+          'Agrégées depuis `/v1/analytics/hero-stats?bucket=avg_badge`. ' +
+          '`winRateByTier[].winRate` vaut `null` sous 200 parties pour le palier. Cache 30 min.',
+        parameters: [
+          { name: 'heroId', in: 'path', required: true, schema: { type: 'integer', minimum: 1 } },
+        ],
+        responses: {
+          '200': {
+            description: 'Statistiques',
+            content: json({
+              type: 'object',
+              required: ['stats', 'meta'],
+              properties: { stats: ref('HeroMetaStats'), meta: ref('DataMeta') },
+            }),
+          },
+          '400': response('BadRequest'),
+          '404': response('NotFound'),
+          '429': response('RateLimited'),
+          '502': response('UpstreamError'),
+          '503': response('ServiceUnavailable'),
+        },
+      },
+    },
+    '/leaderboard': {
+      get: {
+        tags: ['Catalogue'],
+        summary: 'Classement de la saison courante (100 premiers)',
+        parameters: [
+          {
+            name: 'region',
+            in: 'query',
+            schema: {
+              type: 'string',
+              enum: ['Europe', 'Asia', 'NAmerica', 'SAmerica', 'Oceania'],
+              default: 'Europe',
+            },
+          },
+        ],
+        responses: {
+          '200': {
+            description: 'Classement (cache 30 min, la source se met à jour chaque heure)',
+            content: json({
+              type: 'object',
+              required: ['region', 'items', 'meta'],
+              properties: {
+                region: { type: 'string' },
+                items: { type: 'array', items: ref('LeaderboardEntry') },
+                meta: ref('DataMeta'),
+              },
+            }),
+          },
+          '400': response('BadRequest'),
+          '429': response('RateLimited'),
+          '502': response('UpstreamError'),
+          '503': response('ServiceUnavailable'),
+        },
+      },
+    },
+    '/matches/{matchId}': {
+      get: {
+        tags: ['Joueurs'],
+        summary: "Détail d'une partie",
+        description:
+          'Deux équipes (amber, sapphire), joueurs triés par valeur nette. Cache 7 jours.',
+        parameters: [
+          {
+            name: 'matchId',
+            in: 'path',
+            required: true,
+            schema: { type: 'string', pattern: '^\\d{1,19}$' },
+          },
+        ],
+        responses: {
+          '200': {
+            description: 'Partie',
+            content: json({
+              type: 'object',
+              required: ['match', 'meta'],
+              properties: { match: ref('MatchDetail'), meta: ref('DataMeta') },
+            }),
+          },
+          '400': response('BadRequest'),
+          '404': response('NotFound'),
+          '429': response('RateLimited'),
+          '502': response('UpstreamError'),
+          '503': response('ServiceUnavailable'),
+        },
+      },
+    },
+    '/players/{steamId}/heroes': {
+      get: {
+        tags: ['Joueurs'],
+        summary: "Statistiques d'un joueur par héros",
+        description: 'Sur les parties disponibles (même source que le profil), tri par parties.',
+        parameters: [steamIdParam],
+        responses: {
+          '200': {
+            description: 'Héros joués',
+            content: json({
+              type: 'object',
+              required: ['items', 'meta'],
+              properties: {
+                items: { type: 'array', items: ref('PlayerHeroStat') },
+                meta: ref('DataMeta'),
+              },
+            }),
+          },
+          '400': response('BadRequest'),
+          '404': response('NotFound'),
+          '429': response('RateLimited'),
+          '502': response('UpstreamError'),
           '503': response('ServiceUnavailable'),
         },
       },
@@ -676,6 +796,149 @@ export const openApiDocument: O.Document = {
             },
           },
         ],
+      },
+      HeroMetaStats: {
+        type: 'object',
+        required: [
+          'heroId',
+          'matches',
+          'winRate',
+          'pickRate',
+          'avgKills',
+          'avgDeaths',
+          'avgAssists',
+          'winRateByTier',
+        ],
+        properties: {
+          heroId: { type: 'integer' },
+          matches: nullable('integer'),
+          winRate: nullable('number', { description: '%' }),
+          pickRate: nullable('number', { description: '% des parties' }),
+          avgKills: nullable('number'),
+          avgDeaths: nullable('number'),
+          avgAssists: nullable('number'),
+          winRateByTier: {
+            type: 'array',
+            minItems: 12,
+            maxItems: 12,
+            items: {
+              type: 'object',
+              required: ['tier', 'winRate', 'matches'],
+              properties: {
+                tier: { type: 'integer', minimum: 0, maximum: 11 },
+                winRate: nullable('number', { description: 'null sous 200 parties' }),
+                matches: nullable('integer'),
+              },
+            },
+          },
+        },
+      },
+      LeaderboardEntry: {
+        type: 'object',
+        required: ['rank', 'displayName', 'steamId', 'badge', 'topHeroes'],
+        properties: {
+          rank: { type: 'integer', description: 'Position (ex aequo possibles)' },
+          displayName: { type: 'string' },
+          steamId: nullable('string', {
+            description: 'Seulement si la source relie le pseudo à un seul compte',
+          }),
+          badge: {
+            description:
+              'Toujours null : Deadlock API ne fournit pas le rang par joueur dans le classement.',
+            oneOf: [
+              { type: 'null' },
+              {
+                type: 'object',
+                required: ['tier', 'subrank', 'name', 'imageUrl'],
+                properties: {
+                  tier: { type: 'integer' },
+                  subrank: { type: 'integer' },
+                  name: { type: 'string' },
+                  imageUrl: nullable('string'),
+                },
+              },
+            ],
+          },
+          topHeroes: {
+            type: 'array',
+            maxItems: 3,
+            items: {
+              type: 'object',
+              required: ['heroId', 'name', 'imageUrl'],
+              properties: {
+                heroId: { type: 'integer' },
+                name: { type: 'string' },
+                imageUrl: nullable('string'),
+              },
+            },
+          },
+        },
+      },
+      MatchPlayer: {
+        type: 'object',
+        required: [
+          'steamId',
+          'displayName',
+          'heroId',
+          'heroName',
+          'heroImageUrl',
+          'level',
+          'kills',
+          'deaths',
+          'assists',
+          'netWorth',
+          'lastHits',
+          'denies',
+        ],
+        properties: {
+          steamId: nullable('string'),
+          displayName: { type: 'string', description: 'Repli : SteamID, puis « Joueur inconnu »' },
+          heroId: { type: 'integer' },
+          heroName: { type: 'string' },
+          heroImageUrl: nullable('string'),
+          level: nullable('integer'),
+          kills: nullable('integer'),
+          deaths: nullable('integer'),
+          assists: nullable('integer'),
+          netWorth: nullable('integer'),
+          lastHits: nullable('integer'),
+          denies: nullable('integer'),
+        },
+      },
+      MatchDetail: {
+        type: 'object',
+        required: ['matchId', 'playedAt', 'durationSeconds', 'winningSide', 'teams'],
+        properties: {
+          matchId: { type: 'string' },
+          playedAt: nullable('string', { format: 'date-time' }),
+          durationSeconds: nullable('integer'),
+          winningSide: { type: ['string', 'null'], enum: ['amber', 'sapphire', null] },
+          teams: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['side', 'outcome', 'players'],
+              properties: {
+                side: { type: 'string', enum: ['amber', 'sapphire'] },
+                outcome: { type: 'string', enum: ['win', 'loss'] },
+                players: { type: 'array', items: ref('MatchPlayer') },
+              },
+            },
+          },
+        },
+      },
+      PlayerHeroStat: {
+        type: 'object',
+        required: ['heroId', 'heroName', 'heroImageUrl', 'matches', 'wins', 'winRate', 'kda'],
+        properties: {
+          heroId: { type: 'integer' },
+          heroName: { type: 'string' },
+          heroImageUrl: nullable('string'),
+          matches: { type: 'integer' },
+          wins: { type: 'integer' },
+          winRate: nullable('number'),
+          kda: nullable('number'),
+        },
       },
       MatchSummary: {
         type: 'object',
