@@ -44,9 +44,12 @@ export function createFetchMock(): FetchMock {
     }
     if (res.networkError) throw new TypeError('fetch failed');
 
-    return new Response(res.body === undefined ? null : JSON.stringify(res.body), {
+    // Chaîne → corps texte brut (ex. réponse key-value de Steam) ; sinon JSON.
+    const isText = typeof res.body === 'string';
+    const body = res.body === undefined ? null : isText ? res.body : JSON.stringify(res.body);
+    return new Response(body as string | null, {
       status: res.status ?? 200,
-      headers: { 'content-type': 'application/json', ...res.headers },
+      headers: { 'content-type': isText ? 'text/plain' : 'application/json', ...res.headers },
     });
   };
 

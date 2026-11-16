@@ -1,53 +1,96 @@
-import bcrypt from 'bcrypt';
-import type { Types } from 'mongoose';
-import { AppError } from '../../shared/errors';
+import { unauthorized } from '../../shared/errors';
 import { isDuplicateKeyError } from '../../shared/mongo-errors';
-import type { LoginInput, RegisterInput } from './auth.schemas';
 import { signAccessToken, type JwtConfig } from './jwt';
+import { createLoginState, readLoginState } from './login-state';
+import {
+  SteamAuthError,
+  buildSteamLoginUrl,
+  extractOpenIdParams,
+  verifySteamAssertion,
+} from './steam-openid';
 import { UserModel, toPublicUser, type PublicUser } from './user.model';
 
 export interface AuthConfig extends JwtConfig {
-  bcryptRounds: number;
+  apiPublicUrl: string;
+  frontendUrl: string;
+  fetch: typeof fetch;
 }
 
-export interface AuthResult {
-  user: PublicUser;
-  token: string;
-}
+/** Codes renvoyés au front dans `#error=` après un échec de connexion Steam. */
+export type SteamLoginErrorCode =
+  'STEAM_CANCELLED' | 'STEAM_AUTH_FAILED' | 'STEAM_UNAVAILABLE' | 'INVALID_STATE';
+
+const FAILURE_CODES: Record<SteamAuthError['reason'], SteamLoginErrorCode> = {
+  CANCELLED: 'STEAM_CANCELLED',
+  INVALID_ASSERTION: 'STEAM_AUTH_FAILED',
+  STEAM_UNAVAILABLE: 'STEAM_UNAVAILABLE',
+};
 
 export function createAuthService(config: AuthConfig) {
-  // Hash factice : compare() s'exécute même si l'email est inconnu, pour un temps
-  // de réponse comparable et ne pas révéler l'existence d'un compte (§13.6).
-  const dummyHash = bcrypt.hash('timing-equalizer', config.bcryptRounds);
+  // Clé dédiée (séparation de domaine) pour signer le state OpenID.
+  const stateKey = `${config.secret}:steam-login-state`;
+  const callbackUrl = (state: string) =>
+    `${config.apiPublicUrl}/api/auth/steam/callback?state=${encodeURIComponent(state)}`;
+  const frontRedirect = (fragment: Record<string, string>) =>
+    `${config.frontendUrl}/auth/callback#${new URLSearchParams(fragment).toString()}`;
 
-  const issue = (user: PublicUser): AuthResult => ({
-    user,
-    token: signAccessToken(user.id, config),
-  });
+  /** Crée le compte à la première connexion, sinon met à jour la date de connexion. */
+  async function upsertUser(steamId: string): Promise<PublicUser> {
+    const run = () =>
+      UserModel.findOneAndUpdate(
+        { steamId },
+        { $set: { lastLoginAt: new Date() } },
+        { upsert: true, new: true, runValidators: true },
+      ).lean();
+    let user;
+    try {
+      user = await run();
+    } catch (error) {
+      // Deux premières connexions simultanées : la seconde insertion échoue, on relit.
+      if (!isDuplicateKeyError(error)) throw error;
+      user = await run();
+    }
+    return toPublicUser(user);
+  }
 
   return {
-    async register({ email, password }: RegisterInput): Promise<AuthResult> {
-      const passwordHash = await bcrypt.hash(password, config.bcryptRounds);
+    /** URL Steam vers laquelle rediriger le navigateur. */
+    steamLoginUrl(returnPath: string): string {
+      return buildSteamLoginUrl(
+        callbackUrl(createLoginState(returnPath, stateKey)),
+        config.apiPublicUrl,
+      );
+    },
+
+    /**
+     * Traite le retour de Steam et renvoie l'URL du front à atteindre :
+     * `#token=…&returnTo=…` en cas de succès, `#error=…` sinon.
+     */
+    async handleSteamCallback(query: Record<string, unknown>): Promise<string> {
+      const returnTo = readLoginState(query.state, stateKey);
+      if (!returnTo) return frontRedirect({ error: 'INVALID_STATE' });
+
       try {
-        const user = await UserModel.create({ email, passwordHash });
-        return issue(toPublicUser(user));
+        const steamId = await verifySteamAssertion(
+          extractOpenIdParams(query),
+          callbackUrl(query.state as string),
+          config.fetch,
+        );
+        const user = await upsertUser(steamId);
+        return frontRedirect({ token: signAccessToken(user.id, config), returnTo });
       } catch (error) {
-        if (isDuplicateKeyError(error)) {
-          throw new AppError(409, 'EMAIL_ALREADY_USED', 'Cette adresse email est déjà utilisée.');
+        if (error instanceof SteamAuthError) {
+          return frontRedirect({ error: FAILURE_CODES[error.reason], returnTo });
         }
         throw error;
       }
     },
 
-    async login({ email, password }: LoginInput): Promise<AuthResult> {
-      const user = await UserModel.findOne({ email })
-        .select('+passwordHash')
-        .lean<{ _id: Types.ObjectId; email: string; passwordHash: string }>();
-      const valid = await bcrypt.compare(password, user?.passwordHash ?? (await dummyHash));
-      if (!user || !valid) {
-        throw new AppError(401, 'UNAUTHORIZED', 'Email ou mot de passe incorrect.');
-      }
-      return issue(toPublicUser(user));
+    async getUser(userId: string): Promise<PublicUser> {
+      const user = await UserModel.findById(userId).lean();
+      // Compte supprimé entre-temps : la session n'est plus valable.
+      if (!user) throw unauthorized('Session invalide.');
+      return toPublicUser(user);
     },
   };
 }
