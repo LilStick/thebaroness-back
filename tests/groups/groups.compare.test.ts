@@ -1,3 +1,4 @@
+import { ApiCacheModel } from '../../src/database/api-cache';
 import request from 'supertest';
 import { bestMatchOf, longestWinStreak } from '../../src/modules/groups/group.compare';
 import { accountIdToSteamId } from '../../src/shared/schemas';
@@ -108,6 +109,41 @@ describe('GET /api/groups/:id/compare', () => {
       .set(owner.auth)
       .send({ name: 'Duo', steamIds: [accountIdToSteamId(A), accountIdToSteamId(B)] });
     groupId = res.body.id;
+  });
+
+  describe('POST /api/groups/:id/refresh', () => {
+    const refresh = (query: object = {}, id = groupId, auth = owner.auth) =>
+      request(app).post(`/api/groups/${id}/refresh`).query(query).set(auth);
+    const historyCalls = () =>
+      upstream.calls.filter((url) => url.pathname.endsWith('match-history')).length;
+
+    it('relit chaque membre dont la copie a plus de 60 s, même réponse que compare', async () => {
+      const before = await compare({ period: '7d' });
+      expect(historyCalls()).toBe(2);
+      await ApiCacheModel.updateMany(
+        {},
+        [{ $set: { fetchedAt: { $subtract: ['$fetchedAt', 61_000] } } }],
+        { updatePipeline: true },
+      );
+      const res = await refresh({ period: '7d' });
+      expect(res.status).toBe(200);
+      expect(historyCalls()).toBe(4);
+      expect(res.body.members).toStrictEqual(before.body.members);
+      expect(res.body.period).toBe('7d');
+    });
+
+    it('moins de 60 s → aucun appel au fournisseur', async () => {
+      await compare();
+      await refresh();
+      expect(historyCalls()).toBe(2);
+    });
+
+    it('sans JWT → 401 ; groupe d’un autre compte → 404 ; période invalide → 400', async () => {
+      expect((await request(app).post(`/api/groups/${groupId}/refresh`)).status).toBe(401);
+      expect((await refresh({}, groupId, (await createUser()).auth)).status).toBe(404);
+      expect((await refresh({ period: '1y' })).status).toBe(400);
+      expect((await refresh({}, 'abc')).status).toBe(400);
+    });
   });
 
   it('30 jours par défaut : stats, série, meilleure partie, rang et historique de rang', async () => {

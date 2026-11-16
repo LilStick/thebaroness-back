@@ -35,6 +35,13 @@ export function createGroupRouter(requireAuth: RequestHandler, compare: GroupCom
     res.json(await compare(group, period));
   });
 
+  // Refresh forcé de tous les membres (délai minimum par joueur), renvoie la comparaison à jour.
+  router.post('/:id/refresh', async (req, res) => {
+    const group = await service.get(getUserId(req), parse(objectIdSchema, req.params.id));
+    const { period } = parse(compareQuerySchema, req.query);
+    res.json(await compare(group, period, { refresh: true }));
+  });
+
   router.patch('/:id', async (req, res) => {
     const id = parse(objectIdSchema, req.params.id);
     const input = parse(updateGroupSchema, req.body);

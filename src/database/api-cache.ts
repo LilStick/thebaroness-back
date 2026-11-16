@@ -37,6 +37,11 @@ export interface CacheOptions {
   /** Durée de conservation après expiration, pour le repli « périmé ». */
   staleMs?: number;
   source?: string;
+  /**
+   * Refresh forcé : la copie n'est servie que si elle a moins de `maxAgeMs`, même non expirée.
+   * Sert de délai minimum entre deux appels au fournisseur pour une même clé.
+   */
+  maxAgeMs?: number;
 }
 
 const DEFAULT_STALE_MS = 7 * 24 * 3600_000;
@@ -52,14 +57,18 @@ const isUpstreamFailure = (error: unknown) =>
  */
 export async function cached<T>(
   key: string,
-  { ttlMs, staleMs = DEFAULT_STALE_MS, source = 'deadlock-api' }: CacheOptions,
+  { ttlMs, staleMs = DEFAULT_STALE_MS, source = 'deadlock-api', maxAgeMs }: CacheOptions,
   fetcher: () => Promise<T>,
 ): Promise<Cached<T>> {
   const entry = await ApiCacheModel.findOne({ key }, { payload: 1, fetchedAt: 1, expiresAt: 1 })
     .lean<{ payload: T; fetchedAt: Date; expiresAt: Date }>()
     .exec();
   const now = Date.now();
-  if (entry && entry.expiresAt.getTime() > now) {
+  if (
+    entry &&
+    entry.expiresAt.getTime() > now &&
+    (maxAgeMs === undefined || now - entry.fetchedAt.getTime() < maxAgeMs)
+  ) {
     return { data: entry.payload, fetchedAt: entry.fetchedAt, isStale: false };
   }
 

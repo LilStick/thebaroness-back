@@ -19,6 +19,16 @@ const TTL = {
 
 const SEARCH_LIMIT = 20;
 
+/** Délai minimum entre deux appels au fournisseur pour un même joueur lors d'un refresh forcé. */
+export const REFRESH_MIN_INTERVAL_MS = 60_000;
+
+/** `refresh` : relit le fournisseur si la copie a plus de {@link REFRESH_MIN_INTERVAL_MS}. */
+export interface ReadOptions {
+  refresh?: boolean;
+}
+
+const maxAge = (options?: ReadOptions) => (options?.refresh ? REFRESH_MIN_INTERVAL_MS : undefined);
+
 /** Métadonnées de fraîcheur (§19.4) jointes à toute réponse issue de Deadlock API. */
 export interface DataMeta {
   fetchedAt: string;
@@ -176,19 +186,23 @@ const meta = (
 });
 
 export function createPlayersService(deadlock: DeadlockApi, catalog: CatalogService) {
-  const profileOf = (accountId: number) =>
-    cached<SteamProfile | null>(`profile:${accountId}`, { ttlMs: TTL.profile }, () =>
-      deadlock.getSteamProfile(accountId),
+  const profileOf = (accountId: number, options?: ReadOptions) =>
+    cached<SteamProfile | null>(
+      `profile:${accountId}`,
+      { ttlMs: TTL.profile, maxAgeMs: maxAge(options) },
+      () => deadlock.getSteamProfile(accountId),
     );
 
-  const historyOf = (accountId: number) =>
-    cached<StoredMatch[]>(`history:${accountId}`, { ttlMs: TTL.history }, async () =>
-      toStoredMatches(await deadlock.getMatchHistory(accountId)),
+  const historyOf = (accountId: number, options?: ReadOptions) =>
+    cached<StoredMatch[]>(
+      `history:${accountId}`,
+      { ttlMs: TTL.history, maxAgeMs: maxAge(options) },
+      async () => toStoredMatches(await deadlock.getMatchHistory(accountId)),
     );
 
   /** Profil existant ou 404 (un joueur introuvable n'est pas une absence de statistiques). */
-  async function requireProfile(steamId: string) {
-    const profile = await profileOf(steamIdToAccountId(steamId));
+  async function requireProfile(steamId: string, options?: ReadOptions) {
+    const profile = await profileOf(steamIdToAccountId(steamId), options);
     if (!profile.data) throw notFound('Joueur introuvable.');
     return profile as Cached<SteamProfile>;
   }
@@ -203,12 +217,12 @@ export function createPlayersService(deadlock: DeadlockApi, catalog: CatalogServ
       return { items: result.data, meta: meta([result]) };
     },
 
-    async profile(steamId: string) {
+    async profile(steamId: string, options?: ReadOptions) {
       const accountId = steamIdToAccountId(steamId);
       // Profil et historique en parallèle ; l'historique est partagé avec /matches.
       const [profile, history, ranks] = await Promise.allSettled([
-        requireProfile(steamId),
-        historyOf(accountId),
+        requireProfile(steamId, options),
+        historyOf(accountId, options),
         catalog.ranks(),
       ]);
       if (profile.status === 'rejected') throw profile.reason;
@@ -266,10 +280,10 @@ export function createPlayersService(deadlock: DeadlockApi, catalog: CatalogServ
     },
 
     /** Profil et historique bruts d'un joueur (cache partagé), pour la comparaison de groupe. */
-    async member(steamId: string) {
+    async member(steamId: string, options?: ReadOptions) {
       const [profile, history] = await Promise.all([
-        requireProfile(steamId),
-        historyOf(steamIdToAccountId(steamId)),
+        requireProfile(steamId, options),
+        historyOf(steamIdToAccountId(steamId), options),
       ]);
       return { profile, history };
     },
