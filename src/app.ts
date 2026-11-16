@@ -11,6 +11,7 @@ import { createRateLimiter } from './middleware/rate-limit';
 import { requireAuth } from './middleware/require-auth';
 import { createAuthRouter } from './modules/auth/auth.routes';
 import { createAuthService } from './modules/auth/auth.service';
+import { createDocsRouter } from './modules/docs/docs.routes';
 import { healthRouter } from './modules/health/health.routes';
 import { createPlayersRouter } from './modules/players/players.routes';
 import { createPlayersService } from './modules/players/players.service';
@@ -76,6 +77,7 @@ export function createApp({ env, logger, fetch = globalThis.fetch }: AppDeps): E
 
   const api = express.Router();
   api.use('/health', healthRouter);
+  api.use(createDocsRouter());
   // Limite globale par IP (429 `RATE_LIMITED`), en plus de celle, plus stricte, de /auth.
   api.use(createRateLimiter({ windowMs: 60_000, limit: env.API_RATE_LIMIT }));
   api.use(
