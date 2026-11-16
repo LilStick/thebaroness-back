@@ -7,8 +7,36 @@ Dernière mise à jour : 16/11/2026 (voir `git log -- docs/HANDOFF.md` pour le S
 
 ## A lire en premier
 
+- **URGENT (prod cassée) : corriger le `Dockerfile` du front, voir la section « Demande urgente » juste en dessous.**
+
 - **Tout ce que le front attend est livré et testé.** Contrat de référence : `docs/openapi.yaml` **v1.6.0** (aussi sur `http://localhost:3001/api/docs`). A recopier dans `src/contracts/openapi.yaml`.
 - Dépôt GitHub `LilStick/thebaroness-back` (l'ancienne URL `deadlock-tracker-back` redirige ; le nom du dossier local n'a pas d'importance).
+
+## Demande urgente au front (16/11/2026) : `VITE_API_BASE_URL` ignorée au build Coolify
+
+**Symptôme en production** : `https://thebaroness.4esport.fr` ne parle pas au back. Le JavaScript déployé contient ``c=`/api` `` : le front appelle `https://thebaroness.4esport.fr/api/...`, nginx répond `index.html` (200 `text/html`) et le JSON échoue. Le back est sain : `https://api.thebaroness.4esport.fr/api/health` répond `{"status":"ok"}` et autorise l'origine `https://thebaroness.4esport.fr` en CORS.
+
+**Cause** : dans Coolify v3.12, le secret `VITE_API_BASE_URL=https://api.thebaroness.4esport.fr/api` est bien déclaré « Need during buildtime », mais le `Dockerfile` du front redéclare l'argument **avec une valeur par défaut**, qui écrase celle fournie par Coolify :
+
+```dockerfile
+ARG VITE_API_BASE_URL=/api
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+```
+
+Un autre projet déployé sur la même instance Coolify (même mécanisme, `ARG` **sans** valeur par défaut) fonctionne.
+
+**Correctif demandé** (étape 1 du `Dockerfile`, à la place des deux lignes ci-dessus) :
+
+```dockerfile
+ARG VITE_API_BASE_URL
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL:-/api}
+```
+
+`:-/api` garde le comportement actuel pour un build local sans argument (sans lui, la valeur serait vide et les appels partiraient vers `/auth/me` au lieu de `/api/auth/me`). Vérification locale : `docker build --build-arg VITE_API_BASE_URL=https://api.thebaroness.4esport.fr/api .` puis chercher cette URL dans `dist/assets/client-*.js`.
+
+Après le push, LilStick lance un **Force Redeploy** du front dans Coolify ; le back vérifie ensuite le bundle en ligne.
+
+Facultatif, non bloquant : en-têtes de sécurité dans `nginx.conf` (`Content-Security-Policy` avec `connect-src 'self' https://api.thebaroness.4esport.fr`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Content-Type-Options: nosniff`).
 
 ## Demande au front (16/11/2026) : ajout de joueurs sans taper de SteamID64
 
