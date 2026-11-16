@@ -34,6 +34,10 @@ export function createPlayersRouter(players: PlayersService): Router {
     res.json(await players.profile(parse(steamIdSchema, req.params.steamId)));
   });
 
+  router.get('/:steamId/heroes', async (req, res) => {
+    res.json(await players.heroes(parse(steamIdSchema, req.params.steamId)));
+  });
+
   router.get('/:steamId/matches', async (req, res) => {
     const steamId = parse(steamIdSchema, req.params.steamId);
     const { limit, cursor } = parse(matchesQuerySchema, req.query);
