@@ -11,6 +11,8 @@ import { createRateLimiter } from './middleware/rate-limit';
 import { requireAuth } from './middleware/require-auth';
 import { createAuthRouter } from './modules/auth/auth.routes';
 import { createAuthService } from './modules/auth/auth.service';
+import { createCatalogRouter } from './modules/catalog/catalog.routes';
+import { createCatalogService } from './modules/catalog/catalog.service';
 import { createDocsRouter } from './modules/docs/docs.routes';
 import { createGroupRouter } from './modules/groups/group.routes';
 import { healthRouter } from './modules/health/health.routes';
@@ -88,7 +90,9 @@ export function createApp({ env, logger, fetch = globalThis.fetch }: AppDeps): E
   );
   api.use('/tracked-players', createTrackedPlayerRouter(auth));
   api.use('/groups', createGroupRouter(auth));
-  api.use('/players', createPlayersRouter(createPlayersService(deadlock)));
+  const catalog = createCatalogService(deadlock);
+  api.use(createCatalogRouter(catalog));
+  api.use('/players', createPlayersRouter(createPlayersService(deadlock, catalog)));
 
   app.use('/api', api);
   app.use(notFoundHandler);

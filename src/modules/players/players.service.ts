@@ -7,13 +7,14 @@ import type {
 import type { RawMatchHistoryEntry } from '../../integrations/deadlock/deadlock.schemas';
 import { invalidInput, notFound } from '../../shared/errors';
 import { isSteamId64, steamIdToAccountId } from '../../shared/schemas';
+import type { CatalogService } from '../catalog/catalog.service';
+import { rankFromBadge, UNRANKED, type PlayerRank } from '../catalog/ranks';
 
 /** TTL initiaux (§9.2) : choix du projet, pas des garanties du fournisseur. */
 const TTL = {
   search: 5 * 60_000,
   profile: 15 * 60_000,
   history: 3 * 60_000,
-  heroes: 24 * 3600_000,
 } as const;
 
 const SEARCH_LIMIT = 20;
@@ -42,6 +43,8 @@ export interface MatchSummary {
   playedAt: string;
   heroId: number;
   heroName: string;
+  /** Portrait du héros, `null` si le catalogue est indisponible. */
+  heroImageUrl: string | null;
   outcome: 'win' | 'loss';
   durationSeconds: number | null;
   kills: number | null;
@@ -54,7 +57,7 @@ export interface MatchSummary {
  * Partie compacte stockée en cache : seulement les parties classées victoire/défaite
  * (`player_match_outcome` 1 ou 2), triées de la plus récente à la plus ancienne.
  */
-interface StoredMatch {
+export interface StoredMatch {
   matchId: string;
   heroId: number;
   startTime: number;
@@ -64,6 +67,8 @@ interface StoredMatch {
   deaths: number | null;
   assists: number | null;
   netWorth: number | null;
+  /** `ranked_display_badge` (tier * 10 + subrank) en partie classée, sinon `null`. */
+  badge: number | null;
 }
 
 const NULL_STATS: PlayerStats = {
@@ -92,6 +97,7 @@ function toStoredMatches(entries: RawMatchHistoryEntry[]): StoredMatch[] {
       deaths: entry.player_deaths ?? null,
       assists: entry.player_assists ?? null,
       netWorth: entry.net_worth ?? null,
+      badge: entry.ranked_display_badge || null,
     }))
     .sort((a, b) => b.startTime - a.startTime || Number(BigInt(b.matchId) - BigInt(a.matchId)));
 }
@@ -169,7 +175,7 @@ const meta = (
   ...extra,
 });
 
-export function createPlayersService(deadlock: DeadlockApi) {
+export function createPlayersService(deadlock: DeadlockApi, catalog: CatalogService) {
   const profileOf = (accountId: number) =>
     cached<SteamProfile | null>(`profile:${accountId}`, { ttlMs: TTL.profile }, () =>
       deadlock.getSteamProfile(accountId),
@@ -178,11 +184,6 @@ export function createPlayersService(deadlock: DeadlockApi) {
   const historyOf = (accountId: number) =>
     cached<StoredMatch[]>(`history:${accountId}`, { ttlMs: TTL.history }, async () =>
       toStoredMatches(await deadlock.getMatchHistory(accountId)),
-    );
-
-  const heroNames = () =>
-    cached<Record<string, string>>('heroes:names', { ttlMs: TTL.heroes }, () =>
-      deadlock.getHeroNames(),
     );
 
   /** Profil existant ou 404 (un joueur introuvable n'est pas une absence de statistiques). */
@@ -205,21 +206,26 @@ export function createPlayersService(deadlock: DeadlockApi) {
     async profile(steamId: string) {
       const accountId = steamIdToAccountId(steamId);
       // Profil et historique en parallèle ; l'historique est partagé avec /matches.
-      const [profile, history] = await Promise.allSettled([
+      const [profile, history, ranks] = await Promise.allSettled([
         requireProfile(steamId),
         historyOf(accountId),
+        catalog.ranks(),
       ]);
       if (profile.status === 'rejected') throw profile.reason;
 
       const { region, sourceUpdatedAt, ...player } = profile.value.data;
       const hasHistory = history.status === 'fulfilled';
+      // Rang = badge de la partie classée la plus récente (l'historique est trié du plus récent).
+      const badge = hasHistory ? (history.value.data.find((m) => m.badge)?.badge ?? null) : null;
+      const rank: PlayerRank =
+        badge && ranks.status === 'fulfilled' ? rankFromBadge(badge, ranks.value.data) : UNRANKED;
       return {
         player: { ...player, region },
         stats: hasHistory ? computeStats(history.value.data) : NULL_STATS,
-        rank: { badgeId: null, name: null },
+        rank,
         meta: meta(hasHistory ? [profile.value, history.value] : [profile.value], {
           sourceUpdatedAt,
-          isPartial: !hasHistory,
+          isPartial: !hasHistory || (Boolean(badge) && ranks.status === 'rejected'),
         }),
       };
     },
@@ -231,21 +237,22 @@ export function createPlayersService(deadlock: DeadlockApi) {
         requireProfile(steamId),
         historyOf(accountId),
         // Catalogue facultatif : sans lui, nom de repli et réponse marquée partielle.
-        heroNames().catch(() => null),
+        catalog.heroIndex().catch(() => null),
       ]);
 
       const start = after ? history.data.findIndex((m) => isAfterCursor(m, after)) : 0;
       const page = start === -1 ? [] : history.data.slice(start, start + limit);
       const last = page.at(-1);
       const hasMore = start !== -1 && start + limit < history.data.length;
-      const names = heroes?.data ?? {};
+      const index = heroes?.data ?? {};
 
       return {
         items: page.map((m): MatchSummary => ({
           matchId: m.matchId,
           playedAt: new Date(m.startTime * 1000).toISOString(),
           heroId: m.heroId,
-          heroName: names[m.heroId] ?? `Héros #${m.heroId}`,
+          heroName: index[m.heroId]?.name ?? `Héros #${m.heroId}`,
+          heroImageUrl: index[m.heroId]?.imageUrl ?? null,
           outcome: m.win ? 'win' : 'loss',
           durationSeconds: m.duration,
           kills: m.kills,

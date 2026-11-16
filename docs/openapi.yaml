@@ -1,9 +1,9 @@
-# Généré depuis src/docs/openapi.ts (v1.1.0) par `npm run openapi`.
+# Généré depuis src/docs/openapi.ts (v1.2.0) par `npm run openapi`.
 # Ne pas modifier à la main.
 openapi: 3.1.0
 info:
   title: thebaroness API
-  version: 1.1.0
+  version: 1.2.0
   description: "API du tracker de statistiques Deadlock. Les statistiques proviennent de Deadlock API (api.deadlock-api.com, source communautaire indépendante de Valve) ; l'espace privé est stocké dans MongoDB. Erreurs : `{ \"error\": { \"code\", \"message\" } }`. Inconnu = `null`, jamais 0."
 servers:
   - url: /api
@@ -15,6 +15,8 @@ tags:
     description: Données publiques issues de Deadlock API, avec cache.
   - name: Suivis
     description: Liste privée de joueurs suivis (Bearer JWT).
+  - name: Catalogue
+    description: Héros, rangs, carte (assets Deadlock, en français).
 paths:
   /health:
     get:
@@ -212,6 +214,127 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "502":
           $ref: "#/components/responses/UpstreamError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /heroes:
+    get:
+      tags:
+        - Catalogue
+      summary: Héros jouables
+      description: Textes en français, triés par nom. Cache 24 h.
+      responses:
+        "200":
+          description: Catalogue
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - items
+                  - meta
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/HeroSummary"
+                  meta:
+                    $ref: "#/components/schemas/DataMeta"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /heroes/{heroId}:
+    get:
+      tags:
+        - Catalogue
+      summary: Détail d'un héros
+      parameters:
+        - name: heroId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+          example: 6
+      responses:
+        "200":
+          description: Héros
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - hero
+                  - meta
+                properties:
+                  hero:
+                    $ref: "#/components/schemas/HeroDetail"
+                  meta:
+                    $ref: "#/components/schemas/DataMeta"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /ranks:
+    get:
+      tags:
+        - Catalogue
+      summary: Paliers de rang (0 à 11)
+      responses:
+        "200":
+          description: Paliers, sans meta
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - items
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RankTier"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /map:
+    get:
+      tags:
+        - Catalogue
+      summary: Images de la carte
+      responses:
+        "200":
+          description: URLs, sans meta
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - minimap
+                  - tunnels
+                  - frame
+                properties:
+                  minimap:
+                    type: string
+                  tunnels:
+                    type:
+                      - string
+                      - "null"
+                  frame:
+                    type:
+                      - string
+                      - "null"
+        "429":
+          $ref: "#/components/responses/RateLimited"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
   /tracked-players:
@@ -637,21 +760,202 @@ components:
         stats:
           $ref: "#/components/schemas/PlayerStats"
         rank:
-          type: object
-          required:
-            - badgeId
-            - name
-          properties:
-            badgeId:
-              type:
-                - integer
-                - "null"
-            name:
-              type:
-                - string
-                - "null"
+          $ref: "#/components/schemas/PlayerRank"
         meta:
           $ref: "#/components/schemas/DataMeta"
+    PlayerRank:
+      type: object
+      description: Rang issu de la partie classée la plus récente (`ranked_display_badge`). Tout à `null` si aucune partie classée connue.
+      required:
+        - badgeId
+        - name
+        - tier
+        - subrank
+        - imageUrl
+        - color
+      properties:
+        badgeId:
+          type:
+            - integer
+            - "null"
+          description: "`tier * 10 + subrank` (ex. 113)"
+        name:
+          type:
+            - string
+            - "null"
+          example: Éternus 3
+        tier:
+          type:
+            - integer
+            - "null"
+          minimum: 0
+          maximum: 11
+        subrank:
+          type:
+            - integer
+            - "null"
+          minimum: 1
+          maximum: 6
+        imageUrl:
+          type:
+            - string
+            - "null"
+          format: uri
+        color:
+          type:
+            - string
+            - "null"
+          example: "#5CE9A9"
+    RankTier:
+      type: object
+      required:
+        - tier
+        - name
+        - color
+        - imageUrl
+        - subranks
+      properties:
+        tier:
+          type: integer
+          minimum: 0
+          maximum: 11
+        name:
+          type: string
+          example: Éternus
+        color:
+          type: string
+        imageUrl:
+          type: string
+          format: uri
+        subranks:
+          type: array
+          minItems: 6
+          maxItems: 6
+          description: Images des sous-rangs 1 à 6 (index 0 = sous-rang 1)
+          items:
+            type:
+              - string
+              - "null"
+            format: uri
+    HeroImages:
+      type: object
+      required:
+        - card
+        - small
+        - vertical
+        - background
+        - name
+      properties:
+        card:
+          type: string
+        small:
+          type: string
+        vertical:
+          type: string
+        background:
+          type: string
+        name:
+          type:
+            - string
+            - "null"
+    HeroSummary:
+      type: object
+      required:
+        - id
+        - name
+        - role
+        - gunTag
+        - complexity
+        - tags
+        - color
+        - images
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        role:
+          type: string
+          enum:
+            - assassin
+            - brawler
+            - marksman
+            - mystic
+            - healer
+        gunTag:
+          type:
+            - string
+            - "null"
+        complexity:
+          type:
+            - integer
+            - "null"
+        tags:
+          type: array
+          items:
+            type: string
+        color:
+          type: string
+          description: Couleur d’accent hexadécimale
+        images:
+          $ref: "#/components/schemas/HeroImages"
+    HeroDetail:
+      allOf:
+        - $ref: "#/components/schemas/HeroSummary"
+        - type: object
+          required:
+            - lore
+            - stats
+            - abilities
+          properties:
+            lore:
+              type: string
+            stats:
+              type: array
+              items:
+                type: object
+                required:
+                  - key
+                  - label
+                  - value
+                properties:
+                  key:
+                    type: string
+                  label:
+                    type: string
+                  value:
+                    type: number
+            abilities:
+              type: array
+              items:
+                type: object
+                required:
+                  - id
+                  - name
+                  - imageUrl
+                  - type
+                  - description
+                  - cooldownSeconds
+                properties:
+                  id:
+                    type: integer
+                  name:
+                    type: string
+                  imageUrl:
+                    type:
+                      - string
+                      - "null"
+                  type:
+                    type: string
+                    enum:
+                      - signature
+                      - ultimate
+                  description:
+                    type: string
+                  cooldownSeconds:
+                    type:
+                      - number
+                      - "null"
     MatchSummary:
       type: object
       required:
@@ -659,6 +963,7 @@ components:
         - playedAt
         - heroId
         - heroName
+        - heroImageUrl
         - outcome
         - durationSeconds
         - kills
@@ -676,6 +981,11 @@ components:
         heroName:
           type: string
           description: "Repli `Héros #<id>` si catalogue indisponible"
+        heroImageUrl:
+          type:
+            - string
+            - "null"
+          description: Portrait (null sans catalogue)
         outcome:
           type: string
           enum:

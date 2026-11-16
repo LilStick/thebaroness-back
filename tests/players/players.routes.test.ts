@@ -42,15 +42,38 @@ const entry = (matchId: number, startTime: number, outcome: number, extra: objec
 });
 
 const HISTORY = [
-  entry(103, 1_794_740_700, 1),
-  entry(101, 1_794_740_500, 2, { hero_id: 2 }),
-  entry(102, 1_794_740_600, 1),
+  entry(103, 1_794_740_700, 1, { ranked_display_badge: 113 }),
+  entry(101, 1_794_740_500, 2, { hero_id: 2, ranked_display_badge: null }),
+  entry(102, 1_794_740_600, 1, { ranked_display_badge: 112 }),
   // Partie non scorée (abandon/pénalité) : exclue de la liste et des statistiques.
   entry(104, 1_794_740_800, 3),
 ];
 
+const RANKS = [
+  {
+    tier: 0,
+    name: 'Obscurus',
+    color: '#333333',
+    images: { large: 'https://assets.test/rank0.png' },
+  },
+  {
+    tier: 11,
+    name: 'Éternus',
+    color: '#5CE9A9',
+    images: {
+      large_webp: 'https://assets.test/rank11_lg.webp',
+      large_subrank3_webp: 'https://assets.test/ranks/11/3.webp',
+    },
+  },
+];
+
 const HEROES = [
-  { id: 1, name: 'Infernus', class_name: 'hero_inferno', images: {} },
+  {
+    id: 1,
+    name: 'Infernus',
+    class_name: 'hero_inferno',
+    images: { icon_image_small_webp: 'https://assets.test/inferno_sm.webp' },
+  },
   { id: 2, name: 'Seven', class_name: 'hero_gigawatt', images: {} },
 ];
 
@@ -64,7 +87,9 @@ describe('Routes /api/players', () => {
       .on(/^\/v1\/players\/steam-search$/, { body: [PROFILE] })
       .on(/^\/v1\/players\/steam$/, { body: [PROFILE] })
       .on(/^\/v1\/players\/\d+\/match-history$/, { body: HISTORY })
-      .on(/^\/v1\/assets\/heroes$/, { body: HEROES });
+      .on(/^\/v1\/assets\/heroes$/, { body: HEROES })
+      .on(/^\/v1\/assets\/items\/by-type\/ability$/, { body: [] })
+      .on(/^\/v1\/assets\/ranks$/, { body: RANKS });
 
   beforeEach(() => {
     upstream = createFetchMock();
@@ -176,7 +201,14 @@ describe('Routes /api/players', () => {
           assists: 18,
           kda: 4,
         },
-        rank: { badgeId: null, name: null },
+        rank: {
+          badgeId: 113,
+          name: 'Éternus 3',
+          tier: 11,
+          subrank: 3,
+          imageUrl: 'https://assets.test/ranks/11/3.webp',
+          color: '#5CE9A9',
+        },
         meta: {
           fetchedAt: isoDate,
           sourceUpdatedAt: '2026-11-14T16:31:40.000Z',
@@ -254,6 +286,7 @@ describe('Routes /api/players', () => {
         playedAt: new Date(1_794_740_700 * 1000).toISOString(),
         heroId: 1,
         heroName: 'Infernus',
+        heroImageUrl: 'https://assets.test/inferno_sm.webp',
         outcome: 'win',
         durationSeconds: 1800,
         kills: 10,
