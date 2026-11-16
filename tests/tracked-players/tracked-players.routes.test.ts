@@ -66,6 +66,13 @@ describe('CRUD /api/tracked-players', () => {
       expect(res.body).toMatchObject({ alias: '', note: '', tags: [] });
     });
 
+    it('code ami → stocké en SteamID64 ; même joueur en SteamID64 → 409', async () => {
+      const res = await create({ steamId: ' 39734272 ' });
+      expect(res.status).toBe(201);
+      expect(res.body.steamId).toBe(STEAM_ID);
+      expect((await create({ steamId: STEAM_ID })).status).toBe(409);
+    });
+
     it('doublon pour le même compte → 409 ALREADY_TRACKED', async () => {
       await create({ steamId: STEAM_ID }).expect(201);
       const res = await create({ steamId: STEAM_ID });
@@ -88,6 +95,8 @@ describe('CRUD /api/tracked-players', () => {
       ['steamId numérique', { steamId: 76561198000000000 }],
       ['steamId trop court', { steamId: '7656119800000' }],
       ['steamId non Steam', { steamId: '12345678901234567' }],
+      ['code ami nul', { steamId: '0' }],
+      ['code ami > 32 bits', { steamId: '4294967296' }],
       ['alias > 80', { steamId: STEAM_ID, alias: 'a'.repeat(81) }],
       ['note > 1000', { steamId: STEAM_ID, note: 'n'.repeat(1001) }],
       ['11 tags', { steamId: STEAM_ID, tags: Array.from({ length: 11 }, (_, i) => `t${i}`) }],

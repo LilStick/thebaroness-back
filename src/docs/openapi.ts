@@ -5,7 +5,7 @@ import type { OpenAPIV3_1 as O } from 'openapi-types';
  * Servi sur /api/openapi.json et /api/docs ; exporté dans docs/openapi.yaml (`npm run openapi`).
  * Versionnement : majeure = changement incompatible, mineure = ajout, patch = correction.
  */
-export const OPENAPI_VERSION = '1.4.1';
+export const OPENAPI_VERSION = '1.5.0';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const response = (name: string) => ({ $ref: `#/components/responses/${name}` });
@@ -16,6 +16,18 @@ const nullable = (type: 'string' | 'number' | 'integer', extra: object = {}) => 
 const json = (schema: object, example?: unknown) => ({
   'application/json': { schema, ...(example === undefined ? {} : { example }) },
 });
+
+/** Saisie d'un joueur dans un corps de requête : normalisée en SteamID64 par le back. */
+const steamIdInput: O.SchemaObject = {
+  type: 'string',
+  description:
+    'SteamID64 (17 chiffres), code ami Steam/Deadlock (account ID 32 bits), `[U:1:n]` ou URL `https://steamcommunity.com/profiles/<SteamID64>`. Normalisé en SteamID64 ; les URL `/id/<pseudo>` sont refusées.',
+  examples: [
+    '76561198957316510',
+    '997050782',
+    'https://steamcommunity.com/profiles/76561198957316510',
+  ],
+};
 
 const steamIdParam: O.ParameterObject = {
   name: 'steamId',
@@ -515,7 +527,8 @@ export const openApiDocument: O.Document = {
                 minItems: 2,
                 maxItems: 20,
                 uniqueItems: true,
-                items: { type: 'string' },
+                description: 'Doublons détectés après normalisation',
+                items: steamIdInput,
               },
             },
           }),
@@ -937,7 +950,8 @@ export const openApiDocument: O.Document = {
             minItems: 2,
             maxItems: 20,
             uniqueItems: true,
-            items: { type: 'string', pattern: '^\\d{17}$' },
+            description: 'Doublons détectés après normalisation',
+            items: steamIdInput,
           },
         },
       },
@@ -1231,7 +1245,7 @@ export const openApiDocument: O.Document = {
         required: ['steamId'],
         additionalProperties: false,
         properties: {
-          steamId: { type: 'string', pattern: '^\\d{17}$' },
+          steamId: steamIdInput,
           alias: { type: 'string', maxLength: 80, description: 'Trim appliqué' },
           note: { type: 'string', maxLength: 1000, description: 'Trim appliqué' },
           tags: {

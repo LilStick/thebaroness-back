@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { steamIdSchema } from '../../shared/schemas';
+import { steamIdInputSchema } from '../../shared/schemas';
 import { GROUP_LIMITS as L } from './group.model';
 
 const name = z
@@ -9,7 +9,7 @@ const name = z
   .max(L.nameMax, `name : ${L.nameMax} caractères maximum`);
 
 const steamIds = z
-  .array(steamIdSchema)
+  .array(steamIdInputSchema)
   .min(L.membersMin, `steamIds : ${L.membersMin} joueurs minimum`)
   .max(L.membersMax, `steamIds : ${L.membersMax} joueurs maximum`)
   .refine((ids) => new Set(ids).size === ids.length, 'steamIds : doublons interdits');
