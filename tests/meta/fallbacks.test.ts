@@ -113,10 +113,39 @@ describe('Couche Deadlock API : cas limites', () => {
     const upstream = createFetchMock().on(/players\/steam/, { body: [] });
     const api = build(upstream);
     await expect(api.getSteamProfiles([])).resolves.toEqual([]);
-    await expect(api.getPlayerBadges([])).resolves.toEqual(new Map());
+    await expect(api.getPlayerRanks([])).resolves.toEqual({
+      ranks: new Map(),
+      unchecked: new Set(),
+    });
     expect(upstream.calls).toHaveLength(0);
     await api.getSteamProfiles([3, 1, 3]);
     expect(upstream.calls[0]?.searchParams.get('account_ids')).toBe('1,3');
+  });
+
+  it('rangs en lots de 500 ; un lot en échec → rangs des autres, comptes du lot unchecked', async () => {
+    const ids = Array.from({ length: 700 }, (_, i) => i + 1);
+    const upstream = createFetchMock().on(/players\/rank/, (url) =>
+      url.searchParams.get('account_ids')?.startsWith('1,')
+        ? {
+            body: [{ account_id: 5, badge: 113, last_match: { start_time: 9 } }, { account_id: 6 }],
+          }
+        : { status: 500 },
+    );
+    const result = await build(upstream).getPlayerRanks(ids);
+    // Lot de 500 réussi ; lot de 200 tenté deux fois.
+    expect(upstream.calls).toHaveLength(3);
+    expect(upstream.calls[1]?.searchParams.get('account_ids')?.split(',')).toHaveLength(200);
+    expect(result.ranks).toEqual(new Map([[5, { badge: 113, at: 9 }]]));
+    expect([...result.unchecked]).toEqual(ids.slice(500));
+  });
+
+  it('lot en échec puis réussi au second essai → aucun compte unchecked', async () => {
+    let attempts = 0;
+    const upstream = createFetchMock().on(/players\/rank/, () =>
+      ++attempts === 1 ? { status: 500 } : { body: [{ account_id: 1, badge: 104 }] },
+    );
+    const result = await build(upstream).getPlayerRanks([1]);
+    expect(result).toEqual({ ranks: new Map([[1, { badge: 104, at: 0 }]]), unchecked: new Set() });
   });
 
   it('saison : courante trouvée, terminée ou absente → null', async () => {
@@ -147,6 +176,9 @@ describe('Couche Deadlock API : cas limites', () => {
     await expect(api.getAbilities()).resolves.toEqual([]);
     await expect(api.searchPlayers('x', 5)).resolves.toEqual([]);
     await expect(api.getMatchHistory(1)).resolves.toEqual([]);
-    await expect(api.getPlayerBadges([3, 1])).resolves.toEqual(new Map());
+    await expect(api.getPlayerRanks([3, 1])).resolves.toEqual({
+      ranks: new Map(),
+      unchecked: new Set(),
+    });
   });
 });

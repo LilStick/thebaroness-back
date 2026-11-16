@@ -1,3 +1,5 @@
+import { ApiCacheModel } from '../../src/database/api-cache';
+import { accountIdToSteamId } from '../../src/shared/schemas';
 import request from 'supertest';
 import { computeHeroMetaStats, MIN_TIER_SAMPLE } from '../../src/modules/meta/meta.service';
 import { buildTestApp } from '../helpers/app';
@@ -66,7 +68,7 @@ describe('Routes P1 (classement, stats méta, partie, héros d’un joueur)', ()
       },
     ];
 
-    it('région par défaut Europe ; steamId et rang seulement si univoque ; 3 héros max', async () => {
+    it('région par défaut Europe ; compte univoque, homonyme sans rang ; 3 héros max', async () => {
       upstream
         .on(/^\/v1\/leaderboard\/Europe$/, { body: ENTRIES })
         .on(/^\/v1\/players\/rank$/, { body: [{ account_id: ACCOUNT_ID, badge: 104 }] })
@@ -79,6 +81,7 @@ describe('Routes P1 (classement, stats méta, partie, héros d’un joueur)', ()
           rank: 1,
           displayName: 'MikaelS',
           steamId: null,
+          inferred: false,
           badge: null,
           topHeroes: [
             { heroId: 72, name: 'Billy', imageUrl: `${ASSET}/72.webp` },
@@ -90,15 +93,58 @@ describe('Routes P1 (classement, stats méta, partie, héros d’un joueur)', ()
           rank: 2,
           displayName: 'soÿer',
           steamId: STEAM_ID,
+          inferred: false,
           badge: { tier: 10, subrank: 4, name: 'Phantom 4', imageUrl: `${ASSET}/r10_4.webp` },
           topHeroes: [expect.objectContaining({ heroId: 72 })],
         },
-        { rank: 3, displayName: '', steamId: null, badge: null, topHeroes: [] },
+        { rank: 3, displayName: '', steamId: null, inferred: false, badge: null, topHeroes: [] },
       ]);
       expect(res.body.meta).toMatchObject({ isStale: false, isPartial: false });
-      // Un seul appel de rangs, pour les seuls comptes univoques.
+      // Un seul appel de rangs pour tous les comptes candidats.
       const rankCalls = upstream.calls.filter((u) => u.pathname === '/v1/players/rank');
-      expect(rankCalls.map((u) => u.searchParams.get('account_ids'))).toEqual([String(ACCOUNT_ID)]);
+      expect(rankCalls.map((u) => u.searchParams.get('account_ids'))).toEqual([
+        `1,2,3,${ACCOUNT_ID}`,
+      ]);
+    });
+
+    it('homonyme dont un candidat est invérifiable → aucune déduction, isPartial', async () => {
+      const many = Array.from({ length: 600 }, (_, i) => i + 1);
+      upstream
+        .on(/^\/v1\/leaderboard\/Europe$/, {
+          body: { entries: [{ account_name: 'X', possible_account_ids: many, rank: 1 }] },
+        })
+        .on(/^\/v1\/players\/rank$/, (url) =>
+          url.searchParams.get('account_ids')?.startsWith('1,')
+            ? { body: [{ account_id: 1, badge: 104 }] }
+            : { status: 500 },
+        )
+        .on(/^\/v1\/assets\/ranks$/, { body: RANKS });
+      const res = await request(app).get('/api/leaderboard');
+      expect(res.body.items[0]).toMatchObject({ steamId: null, inferred: false, badge: null });
+      expect(res.body.meta.isPartial).toBe(true);
+      // Copie incomplète gardée 1 min seulement (au lieu de 30) pour retenter vite.
+      const entry = await ApiCacheModel.findOne({ key: /^leaderboard:/ }).lean();
+      expect(entry && entry.expiresAt.getTime() - entry.fetchedAt.getTime()).toBe(60_000);
+    });
+
+    it('homonymes : compte au rang le plus élevé, puis partie classée la plus récente ; inferred', async () => {
+      upstream
+        .on(/^\/v1\/leaderboard\/Europe$/, { body: ENTRIES })
+        .on(/^\/v1\/players\/rank$/, {
+          body: [
+            { account_id: 1, badge: 104, last_match: { start_time: 10 } },
+            { account_id: 2, badge: 104, last_match: { start_time: 20 } },
+            { account_id: 3, badge: 0, last_match: null },
+          ],
+        })
+        .on(/^\/v1\/assets\/ranks$/, { body: RANKS });
+      const res = await request(app).get('/api/leaderboard');
+      expect(res.body.items[0]).toMatchObject({
+        steamId: accountIdToSteamId(2),
+        inferred: true,
+        badge: { name: 'Phantom 4' },
+      });
+      expect(res.body.meta.isPartial).toBe(false);
     });
 
     it.each([

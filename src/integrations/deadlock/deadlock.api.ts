@@ -62,6 +62,23 @@ function toSteamProfile(raw: RawSteamProfile): SteamProfile {
 }
 
 /** Accès typé aux endpoints Deadlock API utilisés par l'application. */
+/** Taille d'un lot `account_ids` (Deadlock API en accepte 1000, mais répond souvent 500 au-delà de 500). */
+const RANK_BATCH = 500;
+/** Un lot de 500 comptes peut dépasser le délai par défaut (6 s) quand la source est froide. */
+const RANK_TIMEOUT_MS = 20_000;
+
+export interface KnownRank {
+  badge: number;
+  /** Début de la dernière partie classée (secondes), 0 si inconnu. */
+  at: number;
+}
+
+export interface PlayerRanks {
+  ranks: Map<number, KnownRank>;
+  /** Comptes des lots en échec : leur rang est inconnu, pas absent. */
+  unchecked: Set<number>;
+}
+
 export function createDeadlockApi(client: DeadlockClient) {
   return {
     /** `GET /v1/players/steam-search` : recherche par pseudo ou account_id. */
@@ -107,19 +124,42 @@ export function createDeadlockApi(client: DeadlockClient) {
     },
 
     /**
-     * `GET /v1/players/rank` en lot (≤ 1000 comptes) : badge (`tier * 10 + subrank`) par compte,
-     * seulement pour les comptes qui ont un rang connu.
+     * `GET /v1/players/rank` par lots : rang connu (`badge` = `tier * 10 + subrank`) et date de la
+     * dernière partie classée. Ne lève pas : les comptes d'un lot en échec sont dans `unchecked`.
      */
-    async getPlayerBadges(accountIds: number[]): Promise<Map<number, number>> {
-      if (accountIds.length === 0) return new Map();
-      const raw = await client.get(
-        '/v1/players/rank',
-        { account_ids: [...new Set(accountIds)].sort((a, b) => a - b).join(',') },
-        playerRanksSchema,
+    async getPlayerRanks(accountIds: number[]): Promise<PlayerRanks> {
+      const ids = [...new Set(accountIds)].sort((a, b) => a - b);
+      const chunks = Array.from({ length: Math.ceil(ids.length / RANK_BATCH) }, (_, i) =>
+        ids.slice(i * RANK_BATCH, (i + 1) * RANK_BATCH),
       );
-      return new Map(
-        (raw ?? []).flatMap((r) => (r.badge ? [[r.account_id, r.badge] as const] : [])),
+      const fetchChunk = (chunk: number[]) =>
+        client.get('/v1/players/rank', { account_ids: chunk.join(',') }, playerRanksSchema, {
+          timeoutMs: RANK_TIMEOUT_MS,
+        });
+      // Un second essai pour les lots en échec (lenteurs ponctuelles du fournisseur).
+      const results = await Promise.all(
+        chunks.map((chunk) =>
+          fetchChunk(chunk)
+            .catch(() => fetchChunk(chunk))
+            .then(
+              (value) => ({ chunk, value }),
+              () => ({ chunk, value: undefined }),
+            ),
+        ),
       );
+      const ranks = new Map<number, KnownRank>();
+      const unchecked = new Set<number>();
+      for (const { chunk, value } of results) {
+        if (value === undefined) {
+          for (const id of chunk) unchecked.add(id);
+          continue;
+        }
+        for (const r of value ?? []) {
+          if (r.badge)
+            ranks.set(r.account_id, { badge: r.badge, at: r.last_match?.start_time ?? 0 });
+        }
+      }
+      return { ranks, unchecked };
     },
 
     /** `GET /v1/leaderboard/{region}` : classement de la saison courante (mis à jour chaque heure). */
