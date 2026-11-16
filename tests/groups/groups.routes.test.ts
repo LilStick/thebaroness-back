@@ -47,6 +47,15 @@ describe('CRUD /api/groups', () => {
     expect(stored?.ownerId.toHexString()).toBe(alice.userId);
   });
 
+  it('POST : code ami, [U:1:n] et URL de profil → stockés en SteamID64', async () => {
+    const res = await create({
+      name: 'Trio',
+      steamIds: ['39734282', '[U:1:39734283]', `https://steamcommunity.com/profiles/${C}/`],
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.steamIds).toStrictEqual([A, B, C]);
+  });
+
   it.each([
     ['nom vide', { name: '   ', steamIds: [A, B] }],
     ['nom > 60', { name: 'n'.repeat(61), steamIds: [A, B] }],
@@ -59,7 +68,9 @@ describe('CRUD /api/groups', () => {
       },
     ],
     ['doublon', { name: 'x', steamIds: [A, A] }],
-    ['steamId invalide', { name: 'x', steamIds: [A, '123'] }],
+    ['steamId invalide', { name: 'x', steamIds: [A, '12345678901'] }],
+    ['URL personnalisée', { name: 'x', steamIds: [A, 'https://steamcommunity.com/id/pseudo'] }],
+    ['doublon après normalisation', { name: 'x', steamIds: [A, '39734282'] }],
     ['steamId numérique', { name: 'x', steamIds: [A, Number(B)] }],
     ['ownerId fourni', { name: 'x', steamIds: [A, B], ownerId: '507f1f77bcf86cd799439011' }],
     ['champ inconnu', { name: 'x', steamIds: [A, B], color: 'red' }],

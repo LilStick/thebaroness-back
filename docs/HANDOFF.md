@@ -7,8 +7,25 @@ Dernière mise à jour : 16/11/2026 (voir `git log -- docs/HANDOFF.md` pour le S
 
 ## A lire en premier
 
-- **Tout ce que le front attend est livré et testé.** Contrat de référence : `docs/openapi.yaml` **v1.4.1** (aussi sur `http://localhost:3001/api/docs`). A recopier dans `src/contracts/openapi.yaml`.
+- **Tout ce que le front attend est livré et testé.** Contrat de référence : `docs/openapi.yaml` **v1.5.0** (aussi sur `http://localhost:3001/api/docs`). A recopier dans `src/contracts/openapi.yaml`.
 - Dépôt GitHub `LilStick/thebaroness-back` (l'ancienne URL `deadlock-tracker-back` redirige ; le nom du dossier local n'a pas d'importance).
+
+## Demande au front (16/11/2026) : ajout de joueurs sans taper de SteamID64
+
+Retour de l'utilisateur : pour créer un groupe (et suivre un joueur), il faut saisir un SteamID64 de 17 chiffres, que personne ne connaît par cœur.
+
+1. **Back, déjà livré (v1.5.0, issue #55)** : `POST /api/tracked-players` (`steamId`) et `POST`/`PATCH /api/groups` (`steamIds[]`) acceptent désormais aussi :
+   - le code ami Steam ou Deadlock (account ID 32 bits, par exemple `997050782`) ;
+   - le format `[U:1:997050782]` ;
+   - l'URL `https://steamcommunity.com/profiles/76561198957316510` (avec ou sans `www`, schéma, slash final ou query).
+
+   Le back normalise en SteamID64 avant validation et stockage ; les réponses ne renvoient que des SteamID64. Les doublons sont détectés après normalisation (code ami + SteamID64 du même joueur → 400 dans un groupe, 409 en suivi). Les URL personnalisées `/id/<pseudo>` restent refusées (400) : il faudrait la Web API Steam avec une clé.
+
+2. **Demande au front** :
+   - Dans le formulaire de groupe (et l'ajout d'un joueur suivi), proposer l'ajout d'un membre **par recherche de pseudo** en réutilisant `GET /api/players/search?q=` (renvoie `steamId`, `displayName`, `avatarUrl`), avec puce avatar + pseudo pour chaque membre choisi ;
+   - Garder un champ de saisie libre en repli, en relâchant la validation côté front : ne plus imposer `^\d{17}$`, laisser le back valider et afficher le message de l'erreur 400 `INVALID_INPUT` ;
+   - Libellé d'aide suggéré : « Pseudo, code ami, SteamID64 ou lien de profil Steam ».
+   - Recopier `docs/openapi.yaml` v1.5.0 dans `src/contracts/openapi.yaml` (nouveau schéma de saisie : `GroupInput.steamIds.items` et `TrackedPlayerCreate.steamId`).
 
 ## Etat des routes
 
@@ -63,6 +80,8 @@ Les routes catalogue et joueurs interrogent la vraie API Deadlock : prévoir une
 
 ## Journal des changements de contrat (du plus récent au plus ancien)
 
+- 16/11/2026 : **v1.5.0** (issue #55) : saisie de joueur élargie (code ami, `[U:1:n]`, URL de profil) dans les corps de `tracked-players` et `groups`, normalisée en SteamID64. Réponses inchangées. Rétrocompatible.
+
 - 16/11/2026 : **v1.4.1** (commit `dfd5102`) : données de jeu en anglais (exemples `Eternus 3`). Aucune forme modifiée.
 - 16/11/2026 : **v1.4.0** (commit `db4f09e`) : `GET /groups/:id/compare` ; CRUD `/groups` documenté (schémas `Group`, `GroupInput`, `GroupCompare`).
 - 16/11/2026 : **v1.3.0** (commit `4cd9b73`) : `/heroes/:heroId/stats`, `/leaderboard`, `/matches/:matchId`, `/players/:steamId/heroes` ; `LeaderboardEntry.badge` nullable ; `MatchDetail.playedAt` et `winningSide` nullables.
@@ -74,4 +93,4 @@ Les routes catalogue et joueurs interrogent la vraie API Deadlock : prévoir une
 ## Questions ouvertes
 
 - Images Valve (portraits, rangs, carte) : validation de l'usage par l'encadrant toujours à faire pour la remise (cahier, section 22). Rien à changer côté back.
-- Aucune autre question du back.
+- Demande ci-dessus : ajout de membres par recherche de pseudo.

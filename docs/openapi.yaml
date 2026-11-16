@@ -1,9 +1,9 @@
-# Généré depuis src/docs/openapi.ts (v1.4.1) par `npm run openapi`.
+# Généré depuis src/docs/openapi.ts (v1.5.0) par `npm run openapi`.
 # Ne pas modifier à la main.
 openapi: 3.1.0
 info:
   title: thebaroness API
-  version: 1.4.1
+  version: 1.5.0
   description: "API du tracker de statistiques Deadlock. Les statistiques proviennent de Deadlock API (api.deadlock-api.com, source communautaire indépendante de Valve) ; l'espace privé est stocké dans MongoDB. Erreurs : `{ \"error\": { \"code\", \"message\" } }`. Inconnu = `null`, jamais 0."
 servers:
   - url: /api
@@ -607,8 +607,14 @@ paths:
                   minItems: 2
                   maxItems: 20
                   uniqueItems: true
+                  description: Doublons détectés après normalisation
                   items:
                     type: string
+                    description: SteamID64 (17 chiffres), code ami Steam/Deadlock (account ID 32 bits), `[U:1:n]` ou URL `https://steamcommunity.com/profiles/<SteamID64>`. Normalisé en SteamID64 ; les URL `/id/<pseudo>` sont refusées.
+                    examples:
+                      - "76561198957316510"
+                      - "997050782"
+                      - https://steamcommunity.com/profiles/76561198957316510
       responses:
         "200":
           description: Groupe modifié
@@ -1343,9 +1349,14 @@ components:
           minItems: 2
           maxItems: 20
           uniqueItems: true
+          description: Doublons détectés après normalisation
           items:
             type: string
-            pattern: ^\d{17}$
+            description: SteamID64 (17 chiffres), code ami Steam/Deadlock (account ID 32 bits), `[U:1:n]` ou URL `https://steamcommunity.com/profiles/<SteamID64>`. Normalisé en SteamID64 ; les URL `/id/<pseudo>` sont refusées.
+            examples:
+              - "76561198957316510"
+              - "997050782"
+              - https://steamcommunity.com/profiles/76561198957316510
     GroupCompare:
       type: object
       required:
@@ -1841,7 +1852,11 @@ components:
       properties:
         steamId:
           type: string
-          pattern: ^\d{17}$
+          description: SteamID64 (17 chiffres), code ami Steam/Deadlock (account ID 32 bits), `[U:1:n]` ou URL `https://steamcommunity.com/profiles/<SteamID64>`. Normalisé en SteamID64 ; les URL `/id/<pseudo>` sont refusées.
+          examples:
+            - "76561198957316510"
+            - "997050782"
+            - https://steamcommunity.com/profiles/76561198957316510
         alias:
           type: string
           maxLength: 80

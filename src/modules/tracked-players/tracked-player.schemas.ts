@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { steamIdSchema } from '../../shared/schemas';
+import { steamIdInputSchema } from '../../shared/schemas';
 import { TRACKED_PLAYER_LIMITS as L } from './tracked-player.model';
 
 const alias = z.string().trim().max(L.aliasMax, `alias : ${L.aliasMax} caractères maximum`);
@@ -17,7 +17,7 @@ const tags = z
 
 /** Création : `steamId` requis ; `id`, `ownerId`, timestamps et champs inconnus refusés (strict). */
 export const createTrackedPlayerSchema = z.strictObject({
-  steamId: steamIdSchema,
+  steamId: steamIdInputSchema,
   alias: alias.optional(),
   note: note.optional(),
   tags: tags.optional(),
