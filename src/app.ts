@@ -7,6 +7,7 @@ import { requireAuth } from './middleware/require-auth';
 import { createAuthRouter } from './modules/auth/auth.routes';
 import { createAuthService } from './modules/auth/auth.service';
 import { healthRouter } from './modules/health/health.routes';
+import { createTrackedPlayerRouter } from './modules/tracked-players/tracked-player.routes';
 
 export interface AppDeps {
   env: Env;
@@ -42,6 +43,7 @@ export function createApp({ env, logger, fetch = globalThis.fetch }: AppDeps): E
     createRateLimiter({ windowMs: 15 * 60_000, limit: env.AUTH_RATE_LIMIT }),
     createAuthRouter(authService, auth),
   );
+  api.use('/tracked-players', createTrackedPlayerRouter(auth));
 
   app.use('/api', api);
   app.use(notFoundHandler);
