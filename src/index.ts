@@ -1,27 +1,33 @@
 import 'dotenv/config';
 import { createApp } from './app';
 import { parseEnv } from './config/env';
+import { connectMongo, disconnectMongo } from './database/mongo';
+import { createLogger } from './shared/logger';
 
-/* eslint-disable no-console -- logger structuré prévu dans l'issue #17 */
-function main(): void {
+async function main(): Promise<void> {
   const env = parseEnv(process.env);
-  const app = createApp(env);
+  const logger = createLogger(env.LOG_LEVEL);
 
+  await connectMongo(env.MONGODB_URI);
+  logger.info('Connexion MongoDB établie');
+
+  const app = createApp({ env, logger });
   const server = app.listen(env.PORT, () => {
-    console.log(`API thebaroness démarrée sur le port ${env.PORT} (${env.NODE_ENV})`);
+    logger.info({ port: env.PORT, env: env.NODE_ENV }, 'API thebaroness démarrée');
   });
 
   const shutdown = (signal: string) => {
-    console.log(`${signal} reçu, arrêt du serveur`);
-    server.close(() => process.exit(0));
+    logger.info({ signal }, 'Arrêt du serveur');
+    server.close(() => {
+      void disconnectMongo().finally(() => process.exit(0));
+    });
   };
-  process.on('SIGINT', () => shutdown('SIGINT'));
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.once('SIGINT', () => shutdown('SIGINT'));
+  process.once('SIGTERM', () => shutdown('SIGTERM'));
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(error instanceof Error ? error.message : error);
+main().catch((error: unknown) => {
+  // Avant que le logger soit disponible (config invalide) : sortie brute sur stderr.
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
   process.exit(1);
-}
+});
