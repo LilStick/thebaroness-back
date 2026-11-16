@@ -1,6 +1,6 @@
-# deadlock-tracker-back
+# thebaroness-back
 
-API Node.js / Express / TypeScript / MongoDB du projet **Deadlock Tracker** (EFREI M1 Full Stack JS).
+API Node.js / Express / TypeScript / MongoDB du projet **thebaroness**, un tracker de statistiques Deadlock (EFREI M1 Full Stack JS).
 
 Le frontend se trouve dans un dépôt séparé.
 
