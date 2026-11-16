@@ -7,7 +7,7 @@ Dernière mise à jour : 16/11/2026 (voir `git log -- docs/HANDOFF.md` pour le S
 
 ## A lire en premier
 
-- **Tout ce que le front attend est livré et testé.** Contrat de référence : `docs/openapi.yaml` **v1.5.0** (aussi sur `http://localhost:3001/api/docs`). A recopier dans `src/contracts/openapi.yaml`.
+- **Tout ce que le front attend est livré et testé.** Contrat de référence : `docs/openapi.yaml` **v1.6.0** (aussi sur `http://localhost:3001/api/docs`). A recopier dans `src/contracts/openapi.yaml`.
 - Dépôt GitHub `LilStick/thebaroness-back` (l'ancienne URL `deadlock-tracker-back` redirige ; le nom du dossier local n'a pas d'importance).
 
 ## Demande au front (16/11/2026) : ajout de joueurs sans taper de SteamID64
@@ -26,6 +26,18 @@ Retour de l'utilisateur : pour créer un groupe (et suivre un joueur), il faut s
    - Garder un champ de saisie libre en repli, en relâchant la validation côté front : ne plus imposer `^\d{17}$`, laisser le back valider et afficher le message de l'erreur 400 `INVALID_INPUT` ;
    - Libellé d'aide suggéré : « Pseudo, code ami, SteamID64 ou lien de profil Steam ».
    - Recopier `docs/openapi.yaml` v1.5.0 dans `src/contracts/openapi.yaml` (nouveau schéma de saisie : `GroupInput.steamIds.items` et `TrackedPlayerCreate.steamId`).
+
+## Demande au front (16/11/2026) : bouton « Actualiser »
+
+1. **Back, déjà livré (v1.6.0, issue #57)** :
+   - `POST /api/players/:steamId/refresh` (public, sans corps) : relit profil Steam et historique auprès de Deadlock API, renvoie **exactement la même forme** que `GET /api/players/:steamId`.
+   - `POST /api/groups/:id/refresh?period=7d|30d|season` (JWT, sans corps) : relit tous les membres, renvoie **la même forme** que `GET /api/groups/:id/compare` ; mêmes erreurs (400, 401, 404, 503).
+   - Délai minimum de **60 s par joueur**, partagé entre tous les utilisateurs : pendant ce délai la copie actuelle est renvoyée (200) sans appel au fournisseur. Fournisseur en panne : copie précédente avec `meta.isStale: true`.
+2. **Demande au front** :
+   - Bouton « Actualiser » sur la page profil et sur la comparaison de groupe, qui appelle la route `refresh` et remplace les données affichées par la réponse (puis invalide le cache de requêtes de `/matches` et `/heroes` du joueur pour les relire) ;
+   - Afficher la date de la donnée : `meta.fetchedAt` (« mis à jour il y a 2 min ») et un indicateur si `meta.isStale` ;
+   - Désactiver le bouton pendant la requête et environ 60 s après (le back renverrait de toute façon la même copie).
+   - Facultatif : rafraîchissement automatique (`refetchInterval` de 2 à 3 min, et au retour sur l'onglet) sur ces deux pages, via les routes `GET` habituelles.
 
 ## Etat des routes
 
@@ -80,6 +92,8 @@ Les routes catalogue et joueurs interrogent la vraie API Deadlock : prévoir une
 
 ## Journal des changements de contrat (du plus récent au plus ancien)
 
+- 16/11/2026 : **v1.6.0** (issue #57) : `POST /players/{steamId}/refresh` et `POST /groups/{id}/refresh` (refresh forcé, délai minimum de 60 s par joueur). Rétrocompatible.
+
 - 16/11/2026 : **v1.5.0** (issue #55) : saisie de joueur élargie (code ami, `[U:1:n]`, URL de profil) dans les corps de `tracked-players` et `groups`, normalisée en SteamID64. Réponses inchangées. Rétrocompatible.
 
 - 16/11/2026 : **v1.4.1** (commit `dfd5102`) : données de jeu en anglais (exemples `Eternus 3`). Aucune forme modifiée.
@@ -93,4 +107,4 @@ Les routes catalogue et joueurs interrogent la vraie API Deadlock : prévoir une
 ## Questions ouvertes
 
 - Images Valve (portraits, rangs, carte) : validation de l'usage par l'encadrant toujours à faire pour la remise (cahier, section 22). Rien à changer côté back.
-- Demande ci-dessus : ajout de membres par recherche de pseudo.
+- Demandes ci-dessus : ajout de membres par recherche de pseudo ; bouton « Actualiser » et date de la donnée.

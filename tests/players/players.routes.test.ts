@@ -270,6 +270,82 @@ describe('Routes /api/players', () => {
     });
   });
 
+  describe('POST /api/players/:steamId/refresh', () => {
+    const calls = (suffix: string) =>
+      upstream.calls.filter((url) => url.pathname.endsWith(suffix)).length;
+    const refresh = () => request(app).post(`/api/players/${STEAM_ID}/refresh`);
+    /** Vieillit toutes les entrées du cache sans les faire expirer. */
+    const age = (ms: number) =>
+      ApiCacheModel.updateMany({}, [{ $set: { fetchedAt: { $subtract: ['$fetchedAt', ms] } } }], {
+        updatePipeline: true,
+      });
+
+    it('même réponse que GET /:steamId', async () => {
+      mockAll();
+      const get = await request(app).get(`/api/players/${STEAM_ID}`);
+      await age(61_000);
+      const res = await refresh();
+      expect(res.status).toBe(200);
+      expect({ ...res.body, meta: null }).toStrictEqual({ ...get.body, meta: null });
+    });
+
+    it('cache encore valide mais âgé de plus de 60 s → relu auprès du fournisseur', async () => {
+      mockAll();
+      await request(app).get(`/api/players/${STEAM_ID}`);
+      await age(61_000);
+      const res = await refresh();
+      expect(calls('match-history')).toBe(2);
+      expect(calls('/players/steam')).toBe(2);
+      expect(Date.parse(res.body.meta.fetchedAt)).toBeGreaterThan(Date.now() - 5_000);
+    });
+
+    it('moins de 60 s depuis la dernière lecture → copie servie sans appel', async () => {
+      mockAll();
+      await refresh();
+      await age(30_000);
+      expect((await refresh()).status).toBe(200);
+      expect(calls('match-history')).toBe(1);
+      expect(calls('/players/steam')).toBe(1);
+    });
+
+    it('un GET ordinaire ne relit pas une copie de plus de 60 s non expirée', async () => {
+      mockAll();
+      await refresh();
+      await age(61_000);
+      await request(app).get(`/api/players/${STEAM_ID}`);
+      expect(calls('match-history')).toBe(1);
+    });
+
+    it('fournisseur en échec → copie précédente avec isStale', async () => {
+      mockAll();
+      await refresh();
+      await age(61_000);
+      upstream.reset();
+      upstream
+        .on(/steam$/, { status: 503 })
+        .on(/match-history/, { status: 503 })
+        .on(/assets\/ranks/, { body: RANKS });
+      const res = await refresh();
+      expect(res.status).toBe(200);
+      expect(res.body.meta.isStale).toBe(true);
+      expect(res.body.stats.matchesPlayed).toBeGreaterThan(0);
+    });
+
+    it.each(['123', 'abc'])('steamId %s → 400 sans appel', async (id) => {
+      const res = await request(app).post(`/api/players/${id}/refresh`);
+      expect(res.status).toBe(400);
+      expect(upstream.calls).toHaveLength(0);
+    });
+
+    it('joueur introuvable → 404', async () => {
+      upstream
+        .on(/^\/v1\/players\/steam$/, { body: [] })
+        .on(/match-history/, { body: HISTORY })
+        .on(/assets\/ranks/, { body: RANKS });
+      expect((await refresh()).status).toBe(404);
+    });
+  });
+
   describe('GET /api/players/:steamId/matches', () => {
     it('liste normalisée, triée, parties non scorées exclues, nom de héros résolu', async () => {
       mockAll();

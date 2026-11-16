@@ -34,6 +34,12 @@ export function createPlayersRouter(players: PlayersService): Router {
     res.json(await players.profile(parse(steamIdSchema, req.params.steamId)));
   });
 
+  // Refresh forcé (délai minimum de 60 s par joueur) : même réponse que GET /:steamId.
+  router.post('/:steamId/refresh', async (req, res) => {
+    const steamId = parse(steamIdSchema, req.params.steamId);
+    res.json(await players.profile(steamId, { refresh: true }));
+  });
+
   router.get('/:steamId/heroes', async (req, res) => {
     res.json(await players.heroes(parse(steamIdSchema, req.params.steamId)));
   });

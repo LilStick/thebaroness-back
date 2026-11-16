@@ -2,7 +2,12 @@ import { AppError } from '../../shared/errors';
 import { rankFromBadge, rankScore, type PlayerRank, type RankTier } from '../catalog/ranks';
 import type { CatalogService } from '../catalog/catalog.service';
 import type { HeroIndexEntry } from '../catalog/heroes';
-import { computeStats, type PlayersService, type StoredMatch } from '../players/players.service';
+import {
+  computeStats,
+  type PlayersService,
+  type ReadOptions,
+  type StoredMatch,
+} from '../players/players.service';
 import type { GroupDto } from './group.model';
 
 export const COMPARE_PERIODS = ['7d', '30d', 'season'] as const;
@@ -116,11 +121,11 @@ export function createGroupCompareService(players: PlayersService, catalog: Cata
     return catalog.seasonStart().catch(() => null);
   }
 
-  return async function compare(group: GroupDto, period: ComparePeriod) {
+  return async function compare(group: GroupDto, period: ComparePeriod, options?: ReadOptions) {
     const now = Date.now();
     const [since, members, tiers, heroes] = await Promise.all([
       periodStart(period, now),
-      Promise.allSettled(group.steamIds.map((steamId) => players.member(steamId))),
+      Promise.allSettled(group.steamIds.map((steamId) => players.member(steamId, options))),
       catalog.ranks().catch(() => null),
       catalog.heroIndex().catch(() => null),
     ]);

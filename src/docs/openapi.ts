@@ -5,7 +5,7 @@ import type { OpenAPIV3_1 as O } from 'openapi-types';
  * Servi sur /api/openapi.json et /api/docs ; exporté dans docs/openapi.yaml (`npm run openapi`).
  * Versionnement : majeure = changement incompatible, mineure = ajout, patch = correction.
  */
-export const OPENAPI_VERSION = '1.5.0';
+export const OPENAPI_VERSION = '1.6.0';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const response = (name: string) => ({ $ref: `#/components/responses/${name}` });
@@ -213,6 +213,27 @@ export const openApiDocument: O.Document = {
         parameters: [steamIdParam],
         responses: {
           '200': { description: 'Profil', content: json(ref('PlayerProfile')) },
+          '400': response('BadRequest'),
+          '404': response('NotFound'),
+          '429': response('RateLimited'),
+          '502': response('UpstreamError'),
+          '503': response('ServiceUnavailable'),
+        },
+      },
+    },
+    '/players/{steamId}/refresh': {
+      post: {
+        tags: ['Joueurs'],
+        summary: 'Forcer l’actualisation d’un joueur',
+        description:
+          'Relit profil Steam et historique auprès de Deadlock API sans attendre l’expiration du cache, ' +
+          'puis renvoie la même réponse que `GET /players/{steamId}`. Délai minimum de **60 s par joueur** ' +
+          '(partagé entre tous les utilisateurs) : pendant ce délai la copie actuelle est renvoyée sans appel ' +
+          'au fournisseur. La date de la donnée est dans `meta.fetchedAt`. Fournisseur en échec : copie ' +
+          'précédente avec `meta.isStale`. Aucun corps, aucune authentification.',
+        parameters: [steamIdParam],
+        responses: {
+          '200': { description: 'Profil actualisé', content: json(ref('PlayerProfile')) },
           '400': response('BadRequest'),
           '404': response('NotFound'),
           '429': response('RateLimited'),
@@ -573,6 +594,33 @@ export const openApiDocument: O.Document = {
         ],
         responses: {
           '200': { description: 'Comparaison', content: json(ref('GroupCompare')) },
+          '400': response('BadRequest'),
+          '401': response('Unauthorized'),
+          '404': response('NotFound'),
+          '429': response('RateLimited'),
+          '503': response('ServiceUnavailable'),
+        },
+      },
+    },
+    '/groups/{id}/refresh': {
+      post: {
+        tags: ['Groupes'],
+        summary: 'Forcer l’actualisation des membres et comparer',
+        description:
+          'Comme `GET /groups/{id}/compare`, mais relit chaque membre auprès de Deadlock API ' +
+          '(délai minimum de 60 s par joueur, partagé avec `POST /players/{steamId}/refresh`). ' +
+          'Mêmes contrôles et mêmes erreurs. Aucun corps.',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          trackedIdParam,
+          {
+            name: 'period',
+            in: 'query',
+            schema: { type: 'string', enum: ['7d', '30d', 'season'], default: '30d' },
+          },
+        ],
+        responses: {
+          '200': { description: 'Comparaison actualisée', content: json(ref('GroupCompare')) },
           '400': response('BadRequest'),
           '401': response('Unauthorized'),
           '404': response('NotFound'),
