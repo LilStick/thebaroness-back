@@ -119,6 +119,7 @@ export const playerRanksSchema = z.array(
   z.object({
     account_id: z.number().int().nonnegative(),
     badge: z.number().int().nonnegative().nullish(),
+    last_match: z.object({ start_time: z.number().int().nullish() }).nullish(),
   }),
 );
 

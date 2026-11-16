@@ -54,8 +54,16 @@ export class DeadlockClient {
     this.maxConcurrent = options.maxConcurrent ?? 8;
   }
 
-  /** GET JSON validé par `schema`. Renvoie `null` si le fournisseur répond 404. */
-  get<S extends z.ZodType>(path: string, query: Query, schema: S): Promise<z.output<S> | null> {
+  /**
+   * GET JSON validé par `schema`. Renvoie `null` si le fournisseur répond 404.
+   * `timeoutMs` remplace le délai par défaut pour les requêtes lourdes (lots).
+   */
+  get<S extends z.ZodType>(
+    path: string,
+    query: Query,
+    schema: S,
+    { timeoutMs = this.timeoutMs }: { timeoutMs?: number } = {},
+  ): Promise<z.output<S> | null> {
     const url = new URL(path, this.options.baseUrl);
     for (const [key, value] of Object.entries(query)) {
       if (value !== undefined) url.searchParams.set(key, String(value));
@@ -66,7 +74,7 @@ export class DeadlockClient {
     const pending = this.inFlight.get(key);
     if (pending) return pending as Promise<z.output<S> | null>;
 
-    const promise = this.schedule(() => this.request(url, schema)).finally(() => {
+    const promise = this.schedule(() => this.request(url, schema, timeoutMs)).finally(() => {
       this.inFlight.delete(key);
     });
     this.inFlight.set(key, promise);
@@ -86,7 +94,11 @@ export class DeadlockClient {
     }
   }
 
-  private async request<S extends z.ZodType>(url: URL, schema: S): Promise<z.output<S> | null> {
+  private async request<S extends z.ZodType>(
+    url: URL,
+    schema: S,
+    timeoutMs: number,
+  ): Promise<z.output<S> | null> {
     const now = Date.now();
     if (now < this.blockedUntil) throw unavailable((this.blockedUntil - now) / 1000);
 
@@ -99,7 +111,7 @@ export class DeadlockClient {
           accept: 'application/json',
           ...(this.options.apiKey ? { 'x-api-key': this.options.apiKey } : {}),
         },
-        signal: AbortSignal.timeout(this.timeoutMs),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (error) {
       logger.warn({ ...log, err: (error as Error).name }, 'Deadlock API injoignable');

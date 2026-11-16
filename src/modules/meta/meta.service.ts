@@ -1,5 +1,5 @@
 import { cached } from '../../database/api-cache';
-import type { DeadlockApi } from '../../integrations/deadlock/deadlock.api';
+import type { DeadlockApi, KnownRank } from '../../integrations/deadlock/deadlock.api';
 import type { RawHeroAnalytics } from '../../integrations/deadlock/deadlock.schemas';
 import { notFound } from '../../shared/errors';
 import { accountIdToSteamId } from '../../shared/schemas';
@@ -106,6 +106,45 @@ export function computeHeroMetaStats(rows: RawHeroAnalytics): Record<string, Her
   return result;
 }
 
+type RawLeaderboardEntry = Awaited<ReturnType<DeadlockApi['getLeaderboard']>>[number];
+
+/**
+ * Compte et badge d'une entrée du classement. Pseudo univoque : ce compte. Pseudo partagé par
+ * plusieurs comptes : le candidat au rang le plus élevé (puis à la partie classée la plus
+ * récente), seul plausible dans le haut du classement ; marqué `inferred`. Sans déduction si un
+ * candidat n'a pas pu être vérifié.
+ */
+export function resolveEntry(
+  entry: RawLeaderboardEntry,
+  ranks: Map<number, KnownRank>,
+  unchecked: Set<number> = new Set(),
+) {
+  const ids = entry.possible_account_ids ?? [];
+  let best: number | null = ids.length === 1 ? (ids[0] ?? null) : null;
+  // Jamais de déduction si un candidat n'a pas pu être vérifié : le bon compte peut être celui-là.
+  if (ids.length > 1 && !ids.some((id) => unchecked.has(id))) {
+    for (const id of ids) {
+      const candidate = ranks.get(id);
+      const current = best === null ? undefined : ranks.get(best);
+      if (
+        candidate &&
+        (!current ||
+          candidate.badge > current.badge ||
+          (candidate.badge === current.badge && candidate.at > current.at))
+      )
+        best = id;
+    }
+  }
+  return {
+    rank: entry.rank ?? null,
+    account_name: entry.account_name ?? null,
+    top_hero_ids: entry.top_hero_ids ?? [],
+    accountId: best,
+    badge: best === null ? null : (ranks.get(best)?.badge ?? null),
+    inferred: ids.length > 1 && best !== null,
+  };
+}
+
 export function createMetaService(deadlock: DeadlockApi, catalog: CatalogService) {
   /** Index des héros facultatif : sans lui, noms de repli et réponse partielle. */
   const heroIndex = () => catalog.heroIndex().catch(() => null);
@@ -113,39 +152,40 @@ export function createMetaService(deadlock: DeadlockApi, catalog: CatalogService
   return {
     async leaderboard(region: LeaderboardRegion) {
       const [board, heroes, tiers] = await Promise.all([
-        // Clé v2 : le cache contient aussi les badges.
-        cached(`leaderboard:v2:${region}`, { ttlMs: TTL.leaderboard }, async () => {
-          const entries = (await deadlock.getLeaderboard(region)).slice(0, LEADERBOARD_SIZE);
-          // Rang seulement pour les pseudos reliés à un compte unique, en un seul appel.
-          const unique = entries.flatMap((e) =>
-            e.possible_account_ids?.length === 1 ? e.possible_account_ids : [],
-          );
-          const badges = await deadlock
-            .getPlayerBadges(unique)
-            .then((map) => Object.fromEntries(map) as Record<string, number>)
-            .catch(() => null);
-          return { entries, badges };
-        }),
+        // Clé v3 : le cache contient le compte retenu et son badge pour chaque entrée.
+        cached(
+          `leaderboard:v3:${region}`,
+          // Incomplet (lots de rangs en échec) : nouvel essai à la requête suivante après 1 min.
+          { ttlMs: (data: { complete: boolean }) => (data.complete ? TTL.leaderboard : 60_000) },
+          async () => {
+            const entries = (await deadlock.getLeaderboard(region)).slice(0, LEADERBOARD_SIZE);
+            // Ne lève pas : les comptes d'un lot en échec sont `unchecked`.
+            const { ranks, unchecked } = await deadlock.getPlayerRanks(
+              entries.flatMap((e) => e.possible_account_ids ?? []),
+            );
+            return {
+              entries: entries.map((e) => resolveEntry(e, ranks, unchecked)),
+              complete: unchecked.size === 0,
+            };
+          },
+        ),
         heroIndex(),
         catalog.ranks().catch(() => null),
       ]);
       const index = heroes?.data ?? {};
-      const { entries, badges } = board.data;
+      const { entries, complete } = board.data;
       let missingRank = false;
       return {
         region,
         items: entries.map((entry, position) => {
-          const ids = entry.possible_account_ids ?? [];
-          const accountId = ids.length === 1 ? ids[0] : undefined;
-          const badgeId = accountId ? badges?.[accountId] : undefined;
-          const rank = badgeId && tiers ? rankFromBadge(badgeId, tiers.data) : null;
-          if (badgeId && !tiers) missingRank = true;
+          const rank = entry.badge && tiers ? rankFromBadge(entry.badge, tiers.data) : null;
+          if (entry.badge && !tiers) missingRank = true;
           return {
             rank: entry.rank ?? position + 1,
             displayName: entry.account_name ?? '',
-            // Relier à un profil seulement si la source est univoque.
-            steamId: accountId ? accountIdToSteamId(accountId) : null,
-            // Rang connu seulement pour un compte univoque ayant joué en classé (voir HANDOFF).
+            steamId: entry.accountId ? accountIdToSteamId(entry.accountId) : null,
+            // Compte choisi parmi plusieurs homonymes (celui au rang le plus élevé).
+            inferred: entry.inferred,
             badge:
               rank?.tier != null && rank.subrank != null && rank.name
                 ? {
@@ -162,7 +202,7 @@ export function createMetaService(deadlock: DeadlockApi, catalog: CatalogService
             })),
           };
         }),
-        meta: { ...dataMeta(board), isPartial: !heroes || !badges || missingRank },
+        meta: { ...dataMeta(board), isPartial: !heroes || !complete || missingRank },
       };
     },
 

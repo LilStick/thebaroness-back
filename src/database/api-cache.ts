@@ -31,9 +31,9 @@ export interface Cached<T> {
   isStale: boolean;
 }
 
-export interface CacheOptions {
-  /** Durée de fraîcheur. */
-  ttlMs: number;
+export interface CacheOptions<T = unknown> {
+  /** Durée de fraîcheur, éventuellement selon la donnée (ex. plus courte si incomplète). */
+  ttlMs: number | ((data: T) => number);
   /** Durée de conservation après expiration, pour le repli « périmé ». */
   staleMs?: number;
   source?: string;
@@ -57,7 +57,7 @@ const isUpstreamFailure = (error: unknown) =>
  */
 export async function cached<T>(
   key: string,
-  { ttlMs, staleMs = DEFAULT_STALE_MS, source = 'deadlock-api', maxAgeMs }: CacheOptions,
+  { ttlMs, staleMs = DEFAULT_STALE_MS, source = 'deadlock-api', maxAgeMs }: CacheOptions<T>,
   fetcher: () => Promise<T>,
 ): Promise<Cached<T>> {
   const entry = await ApiCacheModel.findOne({ key }, { payload: 1, fetchedAt: 1, expiresAt: 1 })
@@ -83,7 +83,9 @@ export async function cached<T>(
   }
 
   const fetchedAt = new Date();
-  const expiresAt = new Date(fetchedAt.getTime() + ttlMs);
+  const expiresAt = new Date(
+    fetchedAt.getTime() + (typeof ttlMs === 'function' ? ttlMs(data) : ttlMs),
+  );
   await ApiCacheModel.updateOne(
     { key },
     {

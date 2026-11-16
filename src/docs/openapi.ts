@@ -5,7 +5,7 @@ import type { OpenAPIV3_1 as O } from 'openapi-types';
  * Servi sur /api/openapi.json et /api/docs ; exporté dans docs/openapi.yaml (`npm run openapi`).
  * Versionnement : majeure = changement incompatible, mineure = ajout, patch = correction.
  */
-export const OPENAPI_VERSION = '1.7.0';
+export const OPENAPI_VERSION = '1.8.0';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const response = (name: string) => ({ $ref: `#/components/responses/${name}` });
@@ -1154,16 +1154,22 @@ export const openApiDocument: O.Document = {
       },
       LeaderboardEntry: {
         type: 'object',
-        required: ['rank', 'displayName', 'steamId', 'badge', 'topHeroes'],
+        required: ['rank', 'displayName', 'steamId', 'inferred', 'badge', 'topHeroes'],
         properties: {
           rank: { type: 'integer', description: 'Position (ex aequo possibles)' },
           displayName: { type: 'string' },
           steamId: nullable('string', {
-            description: 'Seulement si la source relie le pseudo à un seul compte',
+            description:
+              'Compte du joueur. Pseudo partagé par plusieurs comptes : celui au rang le plus élevé (voir `inferred`). null si la source ne relie le pseudo à aucun compte, ou à plusieurs sans rang connu.',
           }),
+          inferred: {
+            type: 'boolean',
+            description:
+              'true si `steamId` et `badge` ont été déduits parmi plusieurs comptes homonymes (compte au rang le plus élevé, puis à la partie classée la plus récente).',
+          },
           badge: {
             description:
-              'Rang à la fin de la dernière partie classée (`/v1/players/rank`), seulement si `steamId` est connu (pseudo relié à un compte unique). null si le pseudo est ambigu, si le joueur n’a pas de rang connu, ou si la source des rangs est indisponible (`meta.isPartial`).',
+              'Rang à la fin de la dernière partie classée du compte `steamId` (`/v1/players/rank`). null si aucun compte ou aucun rang connu, ou si la source des rangs est indisponible (`meta.isPartial`). Environ 94 entrées sur 100 en Europe.',
             oneOf: [
               { type: 'null' },
               {

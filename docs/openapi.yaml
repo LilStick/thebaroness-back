@@ -1,9 +1,9 @@
-# Généré depuis src/docs/openapi.ts (v1.7.0) par `npm run openapi`.
+# Généré depuis src/docs/openapi.ts (v1.8.0) par `npm run openapi`.
 # Ne pas modifier à la main.
 openapi: 3.1.0
 info:
   title: thebaroness API
-  version: 1.7.0
+  version: 1.8.0
   description: "API du tracker de statistiques Deadlock. Les statistiques proviennent de Deadlock API (api.deadlock-api.com, source communautaire indépendante de Valve) ; l'espace privé est stocké dans MongoDB. Erreurs : `{ \"error\": { \"code\", \"message\" } }`. Inconnu = `null`, jamais 0."
 servers:
   - url: /api
@@ -1623,6 +1623,7 @@ components:
         - rank
         - displayName
         - steamId
+        - inferred
         - badge
         - topHeroes
       properties:
@@ -1635,9 +1636,12 @@ components:
           type:
             - string
             - "null"
-          description: Seulement si la source relie le pseudo à un seul compte
+          description: "Compte du joueur. Pseudo partagé par plusieurs comptes : celui au rang le plus élevé (voir `inferred`). null si la source ne relie le pseudo à aucun compte, ou à plusieurs sans rang connu."
+        inferred:
+          type: boolean
+          description: true si `steamId` et `badge` ont été déduits parmi plusieurs comptes homonymes (compte au rang le plus élevé, puis à la partie classée la plus récente).
         badge:
-          description: Rang à la fin de la dernière partie classée (`/v1/players/rank`), seulement si `steamId` est connu (pseudo relié à un compte unique). null si le pseudo est ambigu, si le joueur n’a pas de rang connu, ou si la source des rangs est indisponible (`meta.isPartial`).
+          description: Rang à la fin de la dernière partie classée du compte `steamId` (`/v1/players/rank`). null si aucun compte ou aucun rang connu, ou si la source des rangs est indisponible (`meta.isPartial`). Environ 94 entrées sur 100 en Europe.
           oneOf:
             - type: "null"
             - type: object
