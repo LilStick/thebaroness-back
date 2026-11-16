@@ -1,10 +1,12 @@
 import cors from 'cors';
 import express, { type Express } from 'express';
+import helmet from 'helmet';
 import type { Logger } from 'pino';
 import type { Env } from './config/env';
 import { createDeadlockApi } from './integrations/deadlock/deadlock.api';
 import { DeadlockClient } from './integrations/deadlock/deadlock.client';
 import { errorHandler, notFoundHandler } from './middleware/error-handler';
+import { httpLogger } from './middleware/http-logger';
 import { createRateLimiter } from './middleware/rate-limit';
 import { requireAuth } from './middleware/require-auth';
 import { createAuthRouter } from './modules/auth/auth.routes';
@@ -30,6 +32,16 @@ export function createApp({ env, logger, fetch = globalThis.fetch }: AppDeps): E
 
   app.disable('x-powered-by');
   app.set('etag', false);
+  // Nombre de proxys de confiance (nginx, load balancer) pour l'IP réelle du client.
+  app.set('trust proxy', env.TRUST_PROXY);
+  app.use(httpLogger(logger));
+  // API JSON uniquement : en-têtes de sécurité stricts, aucune ressource à charger.
+  app.use(
+    helmet({
+      contentSecurityPolicy: { directives: { defaultSrc: ["'none'"], frameAncestors: ["'none'"] } },
+      crossOriginResourcePolicy: { policy: 'same-site' },
+    }),
+  );
   // Origines explicites (§13.7) ; jeton en en-tête, donc pas de cookies ni `credentials`.
   app.use(
     cors({
@@ -64,6 +76,8 @@ export function createApp({ env, logger, fetch = globalThis.fetch }: AppDeps): E
 
   const api = express.Router();
   api.use('/health', healthRouter);
+  // Limite globale par IP (429 `RATE_LIMITED`), en plus de celle, plus stricte, de /auth.
+  api.use(createRateLimiter({ windowMs: 60_000, limit: env.API_RATE_LIMIT }));
   api.use(
     '/auth',
     createRateLimiter({ windowMs: 15 * 60_000, limit: env.AUTH_RATE_LIMIT }),

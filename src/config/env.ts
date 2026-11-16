@@ -17,6 +17,10 @@ const envSchema = z.object({
   FRONT_URL: z.url().default('http://localhost:5173').transform(stripTrailingSlash),
   /** Tentatives /api/auth/* autorisées par IP et par fenêtre de 15 min. */
   AUTH_RATE_LIMIT: z.coerce.number().int().min(1).default(60),
+  /** Requêtes /api/* autorisées par IP et par minute. */
+  API_RATE_LIMIT: z.coerce.number().int().min(1).default(300),
+  /** Nombre de proxys inverses de confiance devant l'API (0 en accès direct). */
+  TRUST_PROXY: z.coerce.number().int().min(0).max(5).default(0),
   CORS_ORIGIN: z
     .string()
     .default('http://localhost:5173')

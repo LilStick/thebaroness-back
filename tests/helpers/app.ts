@@ -15,6 +15,7 @@ export const testEnv: Env = parseEnv({
   DEADLOCK_API_BASE_URL: 'https://deadlock.test',
   CORS_ORIGIN: 'http://front.test',
   AUTH_RATE_LIMIT: '1000',
+  API_RATE_LIMIT: '100000',
   LOG_LEVEL: 'silent',
 });
 
