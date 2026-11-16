@@ -22,7 +22,7 @@ export interface MapAssets {
 }
 
 interface HeroCatalog {
-  /** Héros jouables, détaillés, triés par nom (fr). */
+  /** Héros jouables, détaillés, triés par nom. */
   heroes: HeroDetail[];
   /** Tous les héros (y compris retirés), pour nommer ceux des anciennes parties. */
   index: Record<string, HeroIndexEntry>;
@@ -37,7 +37,7 @@ export const dataMeta = (source: Pick<Cached<unknown>, 'fetchedAt' | 'isStale'>)
 
 export function createCatalogService(deadlock: DeadlockApi) {
   const heroCatalog = () =>
-    cached<HeroCatalog>('catalog:heroes:fr', { ttlMs: CATALOG_TTL }, async () => {
+    cached<HeroCatalog>('catalog:heroes:en', { ttlMs: CATALOG_TTL }, async () => {
       const [heroes, abilities] = await Promise.all([
         deadlock.getHeroes(),
         deadlock.getAbilities(),
@@ -52,7 +52,7 @@ export function createCatalogService(deadlock: DeadlockApi) {
         heroes: heroes
           .filter(isPlayableHero)
           .map((hero) => toHeroDetail(hero, abilitiesByClass))
-          .sort((a, b) => a.name.localeCompare(b.name, 'fr')),
+          .sort((a, b) => a.name.localeCompare(b.name, 'en')),
         index: Object.fromEntries(
           heroes.map((hero) => [hero.id, { name: hero.name, imageUrl: heroSmallImage(hero) }]),
         ),
@@ -60,7 +60,7 @@ export function createCatalogService(deadlock: DeadlockApi) {
     });
 
   const rankCatalog = () =>
-    cached<RankTier[]>('catalog:ranks:fr', { ttlMs: CATALOG_TTL }, async () =>
+    cached<RankTier[]>('catalog:ranks:en', { ttlMs: CATALOG_TTL }, async () =>
       (await deadlock.getRanks()).map(toRankTier).sort((a, b) => a.tier - b.tier),
     );
 

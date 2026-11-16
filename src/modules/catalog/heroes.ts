@@ -52,16 +52,16 @@ export interface HeroIndexEntry {
   imageUrl: string | null;
 }
 
-/** Statistiques de départ affichées, dans l'ordre, avec libellés français. */
+/** Statistiques de départ affichées, dans l'ordre. Données de jeu en anglais (décision d'équipe, HANDOFF front). */
 const STAT_LABELS: Array<[string, string]> = [
-  ['max_health', 'Santé'],
-  ['base_health_regen', 'Régénération de santé'],
-  ['max_move_speed', 'Vitesse de déplacement'],
-  ['sprint_speed', 'Vitesse de sprint'],
-  ['stamina', 'Endurance'],
-  ['light_melee_damage', 'Mêlée légère'],
-  ['heavy_melee_damage', 'Mêlée lourde'],
-  ['reload_speed', 'Vitesse de rechargement'],
+  ['max_health', 'Health'],
+  ['base_health_regen', 'Health regen'],
+  ['max_move_speed', 'Move speed'],
+  ['sprint_speed', 'Sprint speed'],
+  ['stamina', 'Stamina'],
+  ['light_melee_damage', 'Light melee'],
+  ['heavy_melee_damage', 'Heavy melee'],
+  ['reload_speed', 'Reload speed'],
 ];
 
 const ROLES: Record<string, HeroRole> = {

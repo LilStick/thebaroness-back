@@ -130,11 +130,11 @@ describe('Catalogue', () => {
       expect(res.body.meta).toMatchObject({ isStale: false, isPartial: false });
     });
 
-    it('textes demandés en français ; second appel servi par le cache', async () => {
+    it('données de jeu en anglais (aucun paramètre language) ; second appel servi par le cache', async () => {
       await request(app).get('/api/heroes');
       await request(app).get('/api/heroes/6');
       expect(upstream.calls.filter((u) => u.pathname === '/v1/assets/heroes')).toHaveLength(1);
-      expect(upstream.calls[0]?.searchParams.get('language')).toBe('french');
+      expect(upstream.calls[0]?.searchParams.has('language')).toBe(false);
     });
   });
 
@@ -145,8 +145,8 @@ describe('Catalogue', () => {
       const { hero } = res.body;
       expect(hero.lore).toBe('Brut de décoffrage. Il protège.');
       expect(hero.stats).toEqual([
-        { key: 'max_health', label: 'Santé', value: 800 },
-        { key: 'stamina', label: 'Endurance', value: 3 },
+        { key: 'max_health', label: 'Health', value: 800 },
+        { key: 'stamina', label: 'Stamina', value: 3 },
       ]);
       expect(hero.abilities).toEqual([
         {
@@ -209,7 +209,7 @@ describe('Catalogue', () => {
         },
       ],
     });
-    expect(upstream.calls[0]?.searchParams.get('language')).toBe('french');
+    expect(upstream.calls[0]?.searchParams.has('language')).toBe(false);
   });
 
   it('GET /api/map → minimap (vue « mid »), tunnels et cadre, sans meta', async () => {

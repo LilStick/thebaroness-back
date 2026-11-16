@@ -5,7 +5,7 @@ import type { OpenAPIV3_1 as O } from 'openapi-types';
  * Servi sur /api/openapi.json et /api/docs ; exporté dans docs/openapi.yaml (`npm run openapi`).
  * Versionnement : majeure = changement incompatible, mineure = ajout, patch = correction.
  */
-export const OPENAPI_VERSION = '1.4.0';
+export const OPENAPI_VERSION = '1.4.1';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const response = (name: string) => ({ $ref: `#/components/responses/${name}` });
@@ -70,7 +70,7 @@ export const openApiDocument: O.Document = {
     { name: 'Authentification', description: 'Connexion Steam OpenID uniquement.' },
     { name: 'Joueurs', description: 'Données publiques issues de Deadlock API, avec cache.' },
     { name: 'Suivis', description: 'Liste privée de joueurs suivis (Bearer JWT).' },
-    { name: 'Catalogue', description: 'Héros, rangs, carte (assets Deadlock, en français).' },
+    { name: 'Catalogue', description: 'Héros, rangs, carte (assets Deadlock, en anglais).' },
     { name: 'Groupes', description: 'Groupes privés de joueurs et comparaison (Bearer JWT).' },
   ],
   paths: {
@@ -242,7 +242,7 @@ export const openApiDocument: O.Document = {
       get: {
         tags: ['Catalogue'],
         summary: 'Héros jouables',
-        description: 'Textes en français, triés par nom. Cache 24 h.',
+        description: 'Données de jeu en anglais (comme en jeu), triées par nom. Cache 24 h.',
         responses: {
           '200': {
             description: 'Catalogue',
@@ -827,7 +827,7 @@ export const openApiDocument: O.Document = {
         required: ['badgeId', 'name', 'tier', 'subrank', 'imageUrl', 'color'],
         properties: {
           badgeId: nullable('integer', { description: '`tier * 10 + subrank` (ex. 113)' }),
-          name: nullable('string', { example: 'Éternus 3' }),
+          name: nullable('string', { example: 'Eternus 3' }),
           tier: nullable('integer', { minimum: 0, maximum: 11 }),
           subrank: nullable('integer', { minimum: 1, maximum: 6 }),
           imageUrl: nullable('string', { format: 'uri' }),
@@ -839,7 +839,7 @@ export const openApiDocument: O.Document = {
         required: ['tier', 'name', 'color', 'imageUrl', 'subranks'],
         properties: {
           tier: { type: 'integer', minimum: 0, maximum: 11 },
-          name: { type: 'string', example: 'Éternus' },
+          name: { type: 'string', example: 'Eternus' },
           color: { type: 'string' },
           imageUrl: { type: 'string', format: 'uri' },
           subranks: {

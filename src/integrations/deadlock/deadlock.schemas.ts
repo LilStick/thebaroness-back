@@ -50,7 +50,7 @@ export const mapAssetSchema = z.object({
 
 const imageMap = z.record(z.string(), z.string().nullish()).catch({});
 
-/** `GET /v1/assets/heroes?language=french` : champs consommés par le catalogue. */
+/** `GET /v1/assets/heroes` : champs consommés par le catalogue. */
 export const heroSchema = z.object({
   id: z.number().int(),
   class_name: z.string().nullish(),
@@ -75,7 +75,7 @@ export const heroSchema = z.object({
 export const heroesSchema = z.array(heroSchema);
 export type RawHero = z.infer<typeof heroSchema>;
 
-/** `GET /v1/assets/items/by-type/ability?language=french`. */
+/** `GET /v1/assets/items/by-type/ability`. */
 export const abilitySchema = z.object({
   id: z.number().int(),
   class_name: z.string(),

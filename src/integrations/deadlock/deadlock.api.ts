@@ -141,9 +141,9 @@ export function createDeadlockApi(client: DeadlockClient) {
       return current?.start_timestamp ?? null;
     },
 
-    /** `GET /v1/assets/ranks` : paliers de rang, noms en français. */
+    /** `GET /v1/assets/ranks` : paliers de rang (noms anglais, comme en jeu). */
     async getRanks(): Promise<RawRankAsset[]> {
-      return (await client.get('/v1/assets/ranks', { language: 'french' }, rankAssetsSchema)) ?? [];
+      return (await client.get('/v1/assets/ranks', {}, rankAssetsSchema)) ?? [];
     },
 
     /** `GET /v1/assets/map` : URLs des images de la carte. */
@@ -153,18 +153,12 @@ export function createDeadlockApi(client: DeadlockClient) {
 
     /** `GET /v1/assets/heroes` : tous les héros (filtrage des jouables côté catalogue). */
     async getHeroes(): Promise<RawHero[]> {
-      return (await client.get('/v1/assets/heroes', { language: 'french' }, heroesSchema)) ?? [];
+      return (await client.get('/v1/assets/heroes', {}, heroesSchema)) ?? [];
     },
 
     /** `GET /v1/assets/items/by-type/ability` : capacités de tous les héros. */
     async getAbilities(): Promise<RawAbility[]> {
-      return (
-        (await client.get(
-          '/v1/assets/items/by-type/ability',
-          { language: 'french' },
-          abilitiesSchema,
-        )) ?? []
-      );
+      return (await client.get('/v1/assets/items/by-type/ability', {}, abilitiesSchema)) ?? [];
     },
   };
 }
