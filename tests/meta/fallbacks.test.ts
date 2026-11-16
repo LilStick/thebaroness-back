@@ -116,6 +116,7 @@ describe('Couche Deadlock API : cas limites', () => {
     await expect(api.getPlayerRanks([])).resolves.toEqual({
       ranks: new Map(),
       unchecked: new Set(),
+      rankedWithoutBadge: new Set(),
     });
     expect(upstream.calls).toHaveLength(0);
     await api.getSteamProfiles([3, 1, 3]);
@@ -145,7 +146,11 @@ describe('Couche Deadlock API : cas limites', () => {
       ++attempts === 1 ? { status: 500 } : { body: [{ account_id: 1, badge: 104 }] },
     );
     const result = await build(upstream).getPlayerRanks([1]);
-    expect(result).toEqual({ ranks: new Map([[1, { badge: 104, at: 0 }]]), unchecked: new Set() });
+    expect(result).toEqual({
+      ranks: new Map([[1, { badge: 104, at: 0 }]]),
+      unchecked: new Set(),
+      rankedWithoutBadge: new Set(),
+    });
   });
 
   it('saison : courante trouvée, terminée ou absente → null', async () => {
@@ -179,6 +184,7 @@ describe('Couche Deadlock API : cas limites', () => {
     await expect(api.getPlayerRanks([3, 1])).resolves.toEqual({
       ranks: new Map(),
       unchecked: new Set(),
+      rankedWithoutBadge: new Set(),
     });
   });
 });

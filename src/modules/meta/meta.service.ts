@@ -145,6 +145,34 @@ export function resolveEntry(
   };
 }
 
+/** Au plus ce nombre d'historiques lus par classement (repli rare, historiques volumineux). */
+const HISTORY_FALLBACK_MAX = 10;
+
+/**
+ * Repli pour un compte identifié sans rang alors qu'il a joué en classé : dernier
+ * `ranked_display_badge` non nul de son historique (même règle que le profil).
+ * Renvoie false si un historique n'a pas pu être lu.
+ */
+async function fillFromHistory(
+  deadlock: DeadlockApi,
+  entries: ReturnType<typeof resolveEntry>[],
+  rankedWithoutBadge: Set<number>,
+): Promise<boolean> {
+  const targets = entries
+    .filter((e) => e.accountId !== null && !e.badge && rankedWithoutBadge.has(e.accountId))
+    .slice(0, HISTORY_FALLBACK_MAX);
+  const results = await Promise.allSettled(
+    targets.map(async (entry) => {
+      const history = await deadlock.getMatchHistory(entry.accountId as number);
+      const latest = history
+        .filter((m) => m.ranked_display_badge)
+        .sort((a, b) => b.start_time - a.start_time)[0];
+      entry.badge = latest?.ranked_display_badge ?? null;
+    }),
+  );
+  return results.every((r) => r.status === 'fulfilled');
+}
+
 export function createMetaService(deadlock: DeadlockApi, catalog: CatalogService) {
   /** Index des héros facultatif : sans lui, noms de repli et réponse partielle. */
   const heroIndex = () => catalog.heroIndex().catch(() => null);
@@ -160,13 +188,12 @@ export function createMetaService(deadlock: DeadlockApi, catalog: CatalogService
           async () => {
             const entries = (await deadlock.getLeaderboard(region)).slice(0, LEADERBOARD_SIZE);
             // Ne lève pas : les comptes d'un lot en échec sont `unchecked`.
-            const { ranks, unchecked } = await deadlock.getPlayerRanks(
+            const { ranks, unchecked, rankedWithoutBadge } = await deadlock.getPlayerRanks(
               entries.flatMap((e) => e.possible_account_ids ?? []),
             );
-            return {
-              entries: entries.map((e) => resolveEntry(e, ranks, unchecked)),
-              complete: unchecked.size === 0,
-            };
+            const resolved = entries.map((e) => resolveEntry(e, ranks, unchecked));
+            const fallbackOk = await fillFromHistory(deadlock, resolved, rankedWithoutBadge);
+            return { entries: resolved, complete: unchecked.size === 0 && fallbackOk };
           },
         ),
         heroIndex(),

@@ -127,6 +127,56 @@ describe('Routes P1 (classement, stats méta, partie, héros d’un joueur)', ()
       expect(entry && entry.expiresAt.getTime() - entry.fetchedAt.getTime()).toBe(60_000);
     });
 
+    describe('repli sur l’historique (dernière partie classée sans rang)', () => {
+      const history = (badges: (number | null)[]) =>
+        badges.map((badge, i) => ({
+          match_id: i + 1,
+          hero_id: 6,
+          start_time: 1000 - i,
+          player_match_outcome: 1,
+          match_mode: 4,
+          ranked_display_badge: badge,
+        }));
+      const mockBoard = (rank: object, historyHandler: object) =>
+        upstream
+          .on(/^\/v1\/leaderboard\/Europe$/, {
+            body: {
+              entries: [{ account_name: 'soÿer', possible_account_ids: [ACCOUNT_ID], rank: 3 }],
+            },
+          })
+          .on(/^\/v1\/players\/rank$/, { body: [{ account_id: ACCOUNT_ID, badge: 0, ...rank }] })
+          .on(/match-history/, historyHandler)
+          .on(/^\/v1\/assets\/ranks$/, { body: RANKS });
+
+      it('badge 0 mais partie classée connue → dernier rang de l’historique', async () => {
+        mockBoard({ last_match: { start_time: 1000 } }, { body: history([null, 104, 103]) });
+        const res = await request(app).get('/api/leaderboard');
+        expect(res.body.items[0]).toMatchObject({ inferred: false, badge: { name: 'Phantom 4' } });
+        expect(res.body.meta.isPartial).toBe(false);
+      });
+
+      it('jamais joué en classé (last_match null) → pas de lecture d’historique', async () => {
+        mockBoard({ last_match: null }, { body: [] });
+        const res = await request(app).get('/api/leaderboard');
+        expect(res.body.items[0].badge).toBeNull();
+        expect(upstream.calls.some((u) => u.pathname.includes('match-history'))).toBe(false);
+      });
+
+      it('historique sans aucun rang → null ; historique en échec → null et isPartial', async () => {
+        mockBoard({ last_match: { start_time: 1000 } }, { body: history([null, null]) });
+        let res = await request(app).get('/api/leaderboard');
+        expect(res.body.items[0].badge).toBeNull();
+        expect(res.body.meta.isPartial).toBe(false);
+
+        await ApiCacheModel.deleteMany({});
+        upstream.reset();
+        mockBoard({ last_match: { start_time: 1000 } }, { status: 500 });
+        res = await request(app).get('/api/leaderboard');
+        expect(res.body.items[0].badge).toBeNull();
+        expect(res.body.meta.isPartial).toBe(true);
+      });
+    });
+
     it('homonymes : compte au rang le plus élevé, puis partie classée la plus récente ; inferred', async () => {
       upstream
         .on(/^\/v1\/leaderboard\/Europe$/, { body: ENTRIES })

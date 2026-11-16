@@ -21,7 +21,7 @@ Dernière mise à jour : 16/11/2026 (voir `git log -- docs/HANDOFF.md` pour le S
 
    Merci d'afficher une petite pastille par partie, par exemple « Classée », « Normale », « Street Brawl », « Lobby privé », « Contre bots », « Hero Labs » (`null` : rien ou « n/d »). Ordre de grandeur réel (FunKa) : 487 normales, 49 classées, 3 Street Brawl. Exemple : `{ "matchId": "136927164", ..., "matchMode": "unranked", "gameMode": "normal" }`.
 
-2. **Rang dans le classement (v1.8.0)** : `LeaderboardEntry.badge` est rempli pour **94 entrées sur 100** (Europe), n°1 et n°2 compris (Eternus 5). Nouveau champ obligatoire **`inferred: boolean`** : `true` quand le pseudo correspond à plusieurs comptes Steam et que le back a retenu celui au rang le plus élevé (seul plausible en haut du classement). Dans ce cas, `steamId` est aussi renseigné (profil cliquable). Suggestion d'affichage : rang normal, avec une petite mention discrète (« compte déduit », par exemple au survol). Les 6 entrées restantes n'ont aucun compte dans la source ou aucun rang connu : garder « Rang non communiqué ». Exemple : `{ "rank": 1, "displayName": "MikaelS", "steamId": "7656119...", "inferred": true, "badge": { "tier": 11, "subrank": 5, "name": "Eternus 5", "imageUrl": "..." }, "topHeroes": [...] }`.
+2. **Rang dans le classement (v1.8.0)** : `LeaderboardEntry.badge` est rempli pour **95 entrées sur 100** (Europe), n°1 à n°3 compris (Eternus 5, 5, 3). Nouveau champ obligatoire **`inferred: boolean`** : `true` quand le pseudo correspond à plusieurs comptes Steam et que le back a retenu celui au rang le plus élevé (seul plausible en haut du classement). Dans ce cas, `steamId` est aussi renseigné (profil cliquable). Suggestion d'affichage : rang normal, avec une petite mention discrète (« compte déduit », par exemple au survol). Les 5 entrées restantes n'ont aucun compte dans la source (4) ou aucun candidat ayant joué en classé (1) : garder « Rang non communiqué ». Exemple : `{ "rank": 1, "displayName": "MikaelS", "steamId": "7656119...", "inferred": true, "badge": { "tier": 11, "subrank": 5, "name": "Eternus 5", "imageUrl": "..." }, "topHeroes": [...] }`.
 3. **Nettoyer `docs/HANDOFF.md` du front**, plusieurs sections sont périmées :
    - « Décision à appliquer côté back : données de jeu en anglais » : fait (commit back `dfd5102`) ;
    - tableau « Ce que le front attend encore du back » : compare livré (`db4f09e`), anglais fait, routes P1 branchées ;
@@ -153,6 +153,8 @@ npm run dev             # proxy Vite /api vers http://localhost:3001
 Les routes catalogue et joueurs interrogent la vraie API Deadlock : prévoir une connexion internet. En cas de limitation par la source, les réponses passent en `isStale` ou `isPartial`, ou en 503 avec `Retry-After`.
 
 ## Journal des changements de contrat (du plus récent au plus ancien)
+
+- 16/11/2026 : classement, repli sur l'historique quand la dernière partie classée n'a pas de rang (95/100). Forme inchangée (v1.8.0).
 
 - 16/11/2026 : **v1.8.0** : `LeaderboardEntry.inferred` (nouveau, obligatoire) ; `steamId` et `badge` résolus aussi pour les pseudos homonymes (94/100 rangs en Europe).
 
