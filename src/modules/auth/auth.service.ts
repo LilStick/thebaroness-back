@@ -1,7 +1,10 @@
+import type { Logger } from 'pino';
+import type { DeadlockApi } from '../../integrations/deadlock/deadlock.api';
 import { unauthorized } from '../../shared/errors';
 import { isDuplicateKeyError } from '../../shared/mongo-errors';
+import { steamIdToAccountId } from '../../shared/schemas';
 import { signAccessToken, type JwtConfig } from './jwt';
-import { createLoginState, readLoginState } from './login-state';
+import { createLoginState, isValidLoginState } from './login-state';
 import {
   SteamAuthError,
   buildSteamLoginUrl,
@@ -12,11 +15,13 @@ import { UserModel, toPublicUser, type PublicUser } from './user.model';
 
 export interface AuthConfig extends JwtConfig {
   apiPublicUrl: string;
-  frontendUrl: string;
+  frontUrl: string;
   fetch: typeof fetch;
+  deadlock: Pick<DeadlockApi, 'getSteamProfile'>;
+  logger: Logger;
 }
 
-/** Codes renvoyés au front dans `#error=` après un échec de connexion Steam. */
+/** Codes renvoyés au front dans `?error=` après un échec de connexion Steam. */
 export type SteamLoginErrorCode =
   'STEAM_CANCELLED' | 'STEAM_AUTH_FAILED' | 'STEAM_UNAVAILABLE' | 'INVALID_STATE';
 
@@ -31,44 +36,64 @@ export function createAuthService(config: AuthConfig) {
   const stateKey = `${config.secret}:steam-login-state`;
   const callbackUrl = (state: string) =>
     `${config.apiPublicUrl}/api/auth/steam/callback?state=${encodeURIComponent(state)}`;
-  const frontRedirect = (fragment: Record<string, string>) =>
-    `${config.frontendUrl}/auth/callback#${new URLSearchParams(fragment).toString()}`;
+  const frontCallback = `${config.frontUrl}/auth/callback`;
+  // Contrat front : jeton dans le fragment (jamais transmis à un serveur), erreur en query.
+  const success = (token: string) => `${frontCallback}#token=${encodeURIComponent(token)}`;
+  const failure = (code: SteamLoginErrorCode) => `${frontCallback}?error=${code}`;
 
-  /** Crée le compte à la première connexion, sinon met à jour la date de connexion. */
-  async function upsertUser(steamId: string): Promise<PublicUser> {
-    const run = () =>
-      UserModel.findOneAndUpdate(
-        { steamId },
-        { $set: { lastLoginAt: new Date() } },
-        { upsert: true, new: true, runValidators: true },
-      ).lean();
-    let user;
+  /** Profil Steam via Deadlock API ; `null` si indisponible (la connexion ne doit pas échouer). */
+  async function lookupProfile(steamId: string) {
     try {
-      user = await run();
+      return await config.deadlock.getSteamProfile(steamIdToAccountId(steamId));
     } catch (error) {
-      // Deux premières connexions simultanées : la seconde insertion échoue, on relit.
-      if (!isDuplicateKeyError(error)) throw error;
-      user = await run();
+      config.logger.warn({ err: (error as Error).message }, 'Profil Steam indisponible');
+      return null;
     }
-    return toPublicUser(user);
+  }
+
+  /**
+   * Crée le compte à la première connexion, sinon le met à jour.
+   * Profil disponible → pseudo/avatar rafraîchis ; sinon conservés (repli : steamId à la création).
+   */
+  async function upsertUser(steamId: string): Promise<PublicUser> {
+    const profile = await lookupProfile(steamId);
+    const update = profile
+      ? {
+          $set: {
+            lastLoginAt: new Date(),
+            displayName: profile.displayName || steamId,
+            avatarUrl: profile.avatarUrl,
+          },
+        }
+      : {
+          $set: { lastLoginAt: new Date() },
+          $setOnInsert: { displayName: steamId, avatarUrl: null },
+        };
+    const run = () =>
+      UserModel.findOneAndUpdate({ steamId }, update, {
+        upsert: true,
+        new: true,
+        runValidators: true,
+      }).lean();
+
+    try {
+      return toPublicUser(await run());
+    } catch (error) {
+      // Deux premières connexions simultanées : la seconde insertion échoue, on rejoue en mise à jour.
+      if (!isDuplicateKeyError(error)) throw error;
+      return toPublicUser(await run());
+    }
   }
 
   return {
     /** URL Steam vers laquelle rediriger le navigateur. */
-    steamLoginUrl(returnPath: string): string {
-      return buildSteamLoginUrl(
-        callbackUrl(createLoginState(returnPath, stateKey)),
-        config.apiPublicUrl,
-      );
+    steamLoginUrl(): string {
+      return buildSteamLoginUrl(callbackUrl(createLoginState(stateKey)), config.apiPublicUrl);
     },
 
-    /**
-     * Traite le retour de Steam et renvoie l'URL du front à atteindre :
-     * `#token=…&returnTo=…` en cas de succès, `#error=…` sinon.
-     */
+    /** Traite le retour de Steam et renvoie l'URL du front à atteindre. */
     async handleSteamCallback(query: Record<string, unknown>): Promise<string> {
-      const returnTo = readLoginState(query.state, stateKey);
-      if (!returnTo) return frontRedirect({ error: 'INVALID_STATE' });
+      if (!isValidLoginState(query.state, stateKey)) return failure('INVALID_STATE');
 
       try {
         const steamId = await verifySteamAssertion(
@@ -77,11 +102,9 @@ export function createAuthService(config: AuthConfig) {
           config.fetch,
         );
         const user = await upsertUser(steamId);
-        return frontRedirect({ token: signAccessToken(user.id, config), returnTo });
+        return success(signAccessToken(user.id, config));
       } catch (error) {
-        if (error instanceof SteamAuthError) {
-          return frontRedirect({ error: FAILURE_CODES[error.reason], returnTo });
-        }
+        if (error instanceof SteamAuthError) return failure(FAILURE_CODES[error.reason]);
         throw error;
       }
     },
