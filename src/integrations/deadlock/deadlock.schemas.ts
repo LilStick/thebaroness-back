@@ -145,3 +145,15 @@ export const heroAnalyticsSchema = z.array(
   }),
 );
 export type RawHeroAnalytics = z.infer<typeof heroAnalyticsSchema>;
+
+/** `GET /v1/assets/ranked-seasons` : bornes dans `intervals[]` (timestamps Unix en s). */
+export const rankedSeasonsSchema = z.array(
+  z.object({
+    intervals: z.array(
+      z.object({
+        start_timestamp: z.number().int(),
+        end_timestamp: z.number().int().nullish(),
+      }),
+    ),
+  }),
+);

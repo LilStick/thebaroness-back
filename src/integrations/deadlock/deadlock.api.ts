@@ -9,6 +9,7 @@ import {
   matchHistorySchema,
   matchMetadataSchema,
   rankAssetsSchema,
+  rankedSeasonsSchema,
   steamProfilesSchema,
   type RawAbility,
   type RawHero,
@@ -126,6 +127,18 @@ export function createDeadlockApi(client: DeadlockClient) {
           heroAnalyticsSchema,
         )) ?? []
       );
+    },
+
+    /** Début de la saison classée en cours (epoch s), `null` si inconnu. */
+    async getCurrentSeasonStart(now = Date.now() / 1000): Promise<number | null> {
+      const seasons =
+        (await client.get('/v1/assets/ranked-seasons', {}, rankedSeasonsSchema)) ?? [];
+      const current = seasons
+        .flatMap((season) => season.intervals)
+        .find(
+          (s) => s.start_timestamp <= now && (s.end_timestamp == null || now < s.end_timestamp),
+        );
+      return current?.start_timestamp ?? null;
     },
 
     /** `GET /v1/assets/ranks` : paliers de rang, noms en français. */

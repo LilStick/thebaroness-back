@@ -16,6 +16,7 @@ import { createCatalogService } from './modules/catalog/catalog.service';
 import { createMetaRouter } from './modules/meta/meta.routes';
 import { createMetaService } from './modules/meta/meta.service';
 import { createDocsRouter } from './modules/docs/docs.routes';
+import { createGroupCompareService } from './modules/groups/group.compare';
 import { createGroupRouter } from './modules/groups/group.routes';
 import { healthRouter } from './modules/health/health.routes';
 import { createPlayersRouter } from './modules/players/players.routes';
@@ -91,11 +92,12 @@ export function createApp({ env, logger, fetch = globalThis.fetch }: AppDeps): E
     createAuthRouter(authService, auth),
   );
   api.use('/tracked-players', createTrackedPlayerRouter(auth));
-  api.use('/groups', createGroupRouter(auth));
   const catalog = createCatalogService(deadlock);
   api.use(createCatalogRouter(catalog));
   api.use(createMetaRouter(createMetaService(deadlock, catalog)));
-  api.use('/players', createPlayersRouter(createPlayersService(deadlock, catalog)));
+  const players = createPlayersService(deadlock, catalog);
+  api.use('/players', createPlayersRouter(players));
+  api.use('/groups', createGroupRouter(auth, createGroupCompareService(players, catalog)));
 
   app.use('/api', api);
   app.use(notFoundHandler);

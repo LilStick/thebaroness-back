@@ -5,7 +5,7 @@ import type { OpenAPIV3_1 as O } from 'openapi-types';
  * Servi sur /api/openapi.json et /api/docs ; exporté dans docs/openapi.yaml (`npm run openapi`).
  * Versionnement : majeure = changement incompatible, mineure = ajout, patch = correction.
  */
-export const OPENAPI_VERSION = '1.3.0';
+export const OPENAPI_VERSION = '1.4.0';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const response = (name: string) => ({ $ref: `#/components/responses/${name}` });
@@ -71,6 +71,7 @@ export const openApiDocument: O.Document = {
     { name: 'Joueurs', description: 'Données publiques issues de Deadlock API, avec cache.' },
     { name: 'Suivis', description: 'Liste privée de joueurs suivis (Bearer JWT).' },
     { name: 'Catalogue', description: 'Héros, rangs, carte (assets Deadlock, en français).' },
+    { name: 'Groupes', description: 'Groupes privés de joueurs et comparaison (Bearer JWT).' },
   ],
   paths: {
     '/health': {
@@ -451,6 +452,123 @@ export const openApiDocument: O.Document = {
       },
     },
 
+    '/groups': {
+      get: {
+        tags: ['Groupes'],
+        summary: 'Lister mes groupes',
+        description: 'Du plus récemment modifié au plus ancien.',
+        security: [{ bearerAuth: [] }],
+        responses: {
+          '200': {
+            description: 'Groupes (vide : `{ "items": [] }`)',
+            content: json({
+              type: 'object',
+              required: ['items'],
+              properties: { items: { type: 'array', items: ref('Group') } },
+            }),
+          },
+          '401': response('Unauthorized'),
+          '429': response('RateLimited'),
+        },
+      },
+      post: {
+        tags: ['Groupes'],
+        summary: 'Créer un groupe',
+        security: [{ bearerAuth: [] }],
+        requestBody: { required: true, content: json(ref('GroupInput')) },
+        responses: {
+          '201': { description: 'Groupe créé', content: json(ref('Group')) },
+          '400': response('BadRequest'),
+          '401': response('Unauthorized'),
+          '429': response('RateLimited'),
+        },
+      },
+    },
+    '/groups/{id}': {
+      parameters: [trackedIdParam],
+      get: {
+        tags: ['Groupes'],
+        summary: 'Consulter un groupe',
+        security: [{ bearerAuth: [] }],
+        responses: {
+          '200': { description: 'Groupe', content: json(ref('Group')) },
+          '400': response('BadRequest'),
+          '401': response('Unauthorized'),
+          '404': response('NotFound'),
+          '429': response('RateLimited'),
+        },
+      },
+      patch: {
+        tags: ['Groupes'],
+        summary: 'Modifier un groupe (nom et/ou membres)',
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: json({
+            type: 'object',
+            minProperties: 1,
+            additionalProperties: false,
+            properties: {
+              name: { type: 'string', minLength: 1, maxLength: 60 },
+              steamIds: {
+                type: 'array',
+                minItems: 2,
+                maxItems: 20,
+                uniqueItems: true,
+                items: { type: 'string' },
+              },
+            },
+          }),
+        },
+        responses: {
+          '200': { description: 'Groupe modifié', content: json(ref('Group')) },
+          '400': response('BadRequest'),
+          '401': response('Unauthorized'),
+          '404': response('NotFound'),
+          '429': response('RateLimited'),
+        },
+      },
+      delete: {
+        tags: ['Groupes'],
+        summary: 'Supprimer un groupe',
+        security: [{ bearerAuth: [] }],
+        responses: {
+          '204': { description: 'Supprimé, sans corps' },
+          '400': response('BadRequest'),
+          '401': response('Unauthorized'),
+          '404': response('NotFound'),
+          '429': response('RateLimited'),
+        },
+      },
+    },
+    '/groups/{id}/compare': {
+      get: {
+        tags: ['Groupes'],
+        summary: 'Comparer les membres sur une période',
+        description:
+          '`7d` et `30d` glissants ; `season` depuis le début de la saison classée courante ' +
+          '(toutes les parties si elle est inconnue). Un membre indisponible est omis avec ' +
+          '`meta.isPartial` ; tous indisponibles → 503.',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          trackedIdParam,
+          {
+            name: 'period',
+            in: 'query',
+            schema: { type: 'string', enum: ['7d', '30d', 'season'], default: '30d' },
+          },
+        ],
+        responses: {
+          '200': { description: 'Comparaison', content: json(ref('GroupCompare')) },
+          '400': response('BadRequest'),
+          '401': response('Unauthorized'),
+          '404': response('NotFound'),
+          '429': response('RateLimited'),
+          '503': response('ServiceUnavailable'),
+        },
+      },
+    },
+
     '/tracked-players': {
       get: {
         tags: ['Suivis'],
@@ -796,6 +914,120 @@ export const openApiDocument: O.Document = {
             },
           },
         ],
+      },
+      Group: {
+        type: 'object',
+        required: ['id', 'name', 'steamIds', 'createdAt', 'updatedAt'],
+        properties: {
+          id: { type: 'string' },
+          name: { type: 'string' },
+          steamIds: { type: 'array', items: { type: 'string', pattern: '^\\d{17}$' } },
+          createdAt: { type: 'string', format: 'date-time' },
+          updatedAt: { type: 'string', format: 'date-time' },
+        },
+      },
+      GroupInput: {
+        type: 'object',
+        required: ['name', 'steamIds'],
+        additionalProperties: false,
+        properties: {
+          name: { type: 'string', minLength: 1, maxLength: 60, description: 'Trim appliqué' },
+          steamIds: {
+            type: 'array',
+            minItems: 2,
+            maxItems: 20,
+            uniqueItems: true,
+            items: { type: 'string', pattern: '^\\d{17}$' },
+          },
+        },
+      },
+      GroupCompare: {
+        type: 'object',
+        required: ['group', 'period', 'members', 'meta'],
+        properties: {
+          group: ref('Group'),
+          period: { type: 'string', enum: ['7d', '30d', 'season'] },
+          members: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: [
+                'steamId',
+                'displayName',
+                'avatarUrl',
+                'rank',
+                'matches',
+                'wins',
+                'losses',
+                'winRate',
+                'kda',
+                'longestWinStreak',
+                'bestMatch',
+                'rankHistory',
+              ],
+              properties: {
+                steamId: { type: 'string' },
+                displayName: { type: 'string' },
+                avatarUrl: nullable('string'),
+                rank: { oneOf: [{ type: 'null' }, ref('PlayerRank')] },
+                matches: { type: 'integer' },
+                wins: { type: 'integer' },
+                losses: { type: 'integer' },
+                winRate: nullable('number'),
+                kda: nullable('number', { description: '(K + A) / max(D, 1)' }),
+                longestWinStreak: { type: 'integer' },
+                bestMatch: {
+                  oneOf: [
+                    { type: 'null' },
+                    {
+                      type: 'object',
+                      required: [
+                        'matchId',
+                        'playedAt',
+                        'heroName',
+                        'heroImageUrl',
+                        'kills',
+                        'deaths',
+                        'assists',
+                        'netWorth',
+                        'kda',
+                      ],
+                      properties: {
+                        matchId: { type: 'string' },
+                        playedAt: { type: 'string', format: 'date-time' },
+                        heroName: { type: 'string' },
+                        heroImageUrl: nullable('string'),
+                        kills: { type: 'integer' },
+                        deaths: { type: 'integer' },
+                        assists: { type: 'integer' },
+                        netWorth: nullable('integer'),
+                        kda: nullable('number'),
+                      },
+                    },
+                  ],
+                },
+                rankHistory: {
+                  type: 'array',
+                  description: 'Parties classées de la période, du plus ancien au plus récent',
+                  items: {
+                    type: 'object',
+                    required: ['at', 'score'],
+                    properties: {
+                      at: { type: 'string', format: 'date-time' },
+                      score: {
+                        type: 'integer',
+                        minimum: 1,
+                        maximum: 72,
+                        description: 'tier * 6 + subrank',
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          meta: ref('DataMeta'),
+        },
       },
       HeroMetaStats: {
         type: 'object',

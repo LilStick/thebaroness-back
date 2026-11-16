@@ -85,6 +85,14 @@ export function createCatalogService(deadlock: DeadlockApi) {
 
     ranks: rankCatalog,
 
+    /** Début de la saison classée courante (epoch s) ou `null` (cache 24 h). */
+    async seasonStart(): Promise<number | null> {
+      const { data } = await cached('catalog:season-start', { ttlMs: CATALOG_TTL }, async () => ({
+        start: await deadlock.getCurrentSeasonStart(),
+      }));
+      return data.start;
+    },
+
     async map(): Promise<MapAssets> {
       const { data } = await cached('catalog:map', { ttlMs: CATALOG_TTL }, async () => {
         const images = await deadlock.getMapImages();
