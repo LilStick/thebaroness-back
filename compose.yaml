@@ -1,0 +1,47 @@
+# API thebaroness + MongoDB.
+#   docker compose up --build -d     démarrer
+#   docker compose down              arrêter (données conservées)
+#   docker compose down -v           ⚠️ arrêter ET SUPPRIMER la base (volume mongo-data)
+name: thebaroness
+
+services:
+  mongodb:
+    image: mongo:8.0
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    networks: [backend]
+    # Accès de maintenance facultatif, limité à la machine locale (jamais exposé publiquement).
+    ports:
+      - '127.0.0.1:27017:27017'
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  api:
+    build: .
+    image: thebaroness-back:local
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Valeurs propres au réseau Compose ; le reste vient de .env (voir .env.example).
+      MONGODB_URI: mongodb://mongodb:27017/thebaroness
+      PORT: '3001'
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET doit être défini (fichier .env ou environnement)}
+    ports:
+      - '${API_PORT:-3001}:3001'
+    networks: [backend]
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+volumes:
+  mongo-data:
+
+networks:
+  backend:
