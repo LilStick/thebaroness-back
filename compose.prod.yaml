@@ -2,8 +2,9 @@
 # Un conteneur par service : mongodb, api (HTTP), worker (préchauffage du cache).
 # Aucun port publié : Coolify (Traefik) route le domaine de l'API vers api:3001.
 # Variables à renseigner dans Coolify : voir docs/DEPLOY.md.
-# Pas de `${VAR:?}` : Coolify v3 lance `docker compose pull` sans les secrets. Une variable
-# obligatoire manquante est refusée au démarrage par la validation de l'API (src/config/env.ts).
+# Coolify v3 injecte lui-même les Secrets dans l'environnement de chaque service : seules les
+# valeurs propres au réseau Docker figurent ici (une même clé en double fait échouer le pull).
+# Variables absentes : défauts de src/config/env.ts ; obligatoire manquante : refus au démarrage.
 services:
   mongodb:
     image: mongo:8.0
@@ -26,17 +27,6 @@ services:
       NODE_ENV: production
       PORT: '3001'
       MONGODB_URI: mongodb://mongodb:27017/thebaroness
-      JWT_SECRET: ${JWT_SECRET}
-      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-15m}
-      API_PUBLIC_URL: ${API_PUBLIC_URL}
-      FRONT_URL: ${FRONT_URL}
-      CORS_ORIGIN: ${CORS_ORIGIN}
-      TRUST_PROXY: ${TRUST_PROXY:-1}
-      AUTH_RATE_LIMIT: ${AUTH_RATE_LIMIT:-60}
-      API_RATE_LIMIT: ${API_RATE_LIMIT:-300}
-      DEADLOCK_API_BASE_URL: ${DEADLOCK_API_BASE_URL:-https://api.deadlock-api.com}
-      DEADLOCK_API_KEY: ${DEADLOCK_API_KEY:-}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
       # Le préchauffage tourne dans le conteneur worker, pas dans l'API.
       REFRESH_WORKER_ENABLED: 'false'
     depends_on:
@@ -50,12 +40,6 @@ services:
     environment:
       NODE_ENV: production
       MONGODB_URI: mongodb://mongodb:27017/thebaroness
-      # Exigé par la validation commune de la configuration (non utilisé par le worker).
-      JWT_SECRET: ${JWT_SECRET}
-      DEADLOCK_API_BASE_URL: ${DEADLOCK_API_BASE_URL:-https://api.deadlock-api.com}
-      DEADLOCK_API_KEY: ${DEADLOCK_API_KEY:-}
-      REFRESH_INTERVAL_MS: ${REFRESH_INTERVAL_MS:-300000}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
     # Sain si un cycle s'est terminé récemment (heartbeat réécrit à chaque cycle).
     healthcheck:
       test:
