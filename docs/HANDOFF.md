@@ -12,14 +12,14 @@ Dernière mise à jour : 16/11/2026 (voir `git log -- docs/HANDOFF.md` pour le S
 
 ## Etat des routes
 
-| Route                                                                                                                                         | Etat                      | Note                                                       |
-| --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- | ---------------------------------------------------------- |
-| health, Steam (`/auth/steam`, callback, `/auth/me`), `players/search`, `players/:steamId`, `players/:steamId/matches`, CRUD `tracked-players` | TESTEE                    | Contrat v1.1.0, déjà branché par le front                  |
-| CRUD `/api/groups`                                                                                                                            | TESTEE (commit `937eae6`) | Conforme à `back-groups-contract.md`, voir écarts plus bas |
-| `GET /api/groups/:id/compare`                                                                                                                 | EN COURS                  | Après le P1                                                |
-| `GET /api/ranks`, `GET /api/map`, `GET /api/heroes`, `GET /api/heroes/:heroId`                                                                | EN COURS                  | Priorité 1 du front                                        |
-| `rank` détaillé dans le profil, `heroImageUrl` dans les parties                                                                               | EN COURS                  | Priorités 2 et 3 du front                                  |
-| `heroes/:heroId/stats`, `leaderboard`, `matches/:matchId`, `players/:steamId/heroes`                                                          | NON COMMENCEE             | Priorité 4                                                 |
+| Route                                                                                                                                         | Etat                      | Note                                                                                                      |
+| --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------- |
+| health, Steam (`/auth/steam`, callback, `/auth/me`), `players/search`, `players/:steamId`, `players/:steamId/matches`, CRUD `tracked-players` | TESTEE                    | Contrat v1.1.0, déjà branché par le front                                                                 |
+| CRUD `/api/groups`                                                                                                                            | TESTEE (commit `937eae6`) | Conforme à `back-groups-contract.md`, voir écarts plus bas                                                |
+| `GET /api/groups/:id/compare`                                                                                                                 | NON COMMENCEE             | Après la priorité 4                                                                                       |
+| `GET /api/heroes`, `GET /api/heroes/:heroId`, `GET /api/ranks`, `GET /api/map`                                                                | TESTEE (commit `2800e54`) | Priorité 1. Vérifié contre la vraie API : identique aux fixtures du front                                 |
+| `rank` détaillé dans le profil, `heroImageUrl` dans les parties                                                                               | TESTEE (commit `2800e54`) | Priorités 2 et 3. Exemple réel : `{ "badgeId": 113, "name": "Éternus 3", "tier": 11, "subrank": 3, ... }` |
+| `heroes/:heroId/stats`, `leaderboard`, `matches/:matchId`, `players/:steamId/heroes`                                                          | EN COURS                  | Priorité 4                                                                                                |
 
 Ordre suivi : celui du HANDOFF front (1 à 3, puis 4, puis compare). Seul le CRUD des groupes a été fait avant, car il ne dépendait de rien.
 
@@ -73,6 +73,7 @@ npm run dev             # proxy Vite /api vers http://localhost:3001
 
 ## Journal des changements de contrat (du plus récent au plus ancien)
 
+- 16/11/2026 : contrat **v1.2.0** (`docs/openapi.yaml`, commit `2800e54`) : `/heroes`, `/heroes/:heroId`, `/ranks`, `/map` ; `PlayerRank` complet (`tier`, `subrank`, `imageUrl`, `color` toujours présents, `null` si non classé) ; `MatchSummary.heroImageUrl` (toujours présent, `null` sans catalogue). A recopier dans `src/contracts/openapi.yaml`.
 - 16/11/2026 : CRUD `/api/groups` (conforme à `back-groups-contract.md`).
 - 16/11/2026 : contrat v1.1.0 : Steam OpenID, `PublicUser`, `player.region`, CORS.
 - 16/11/2026 : contrat v1.0.0 : routes P0 du cahier.
