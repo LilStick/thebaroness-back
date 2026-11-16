@@ -42,9 +42,9 @@ const entry = (matchId: number, startTime: number, outcome: number, extra: objec
 });
 
 const HISTORY = [
-  entry(103, 1_794_740_700, 1, { ranked_display_badge: 113 }),
+  entry(103, 1_794_740_700, 1, { ranked_display_badge: 113, match_mode: 4 }),
   entry(101, 1_794_740_500, 2, { hero_id: 2, ranked_display_badge: null }),
-  entry(102, 1_794_740_600, 1, { ranked_display_badge: 112 }),
+  entry(102, 1_794_740_600, 1, { ranked_display_badge: 112, match_mode: 0, game_mode: 4 }),
   // Partie non scorée (abandon/pénalité) : exclue de la liste et des statistiques.
   entry(104, 1_794_740_800, 3),
 ];
@@ -369,10 +369,31 @@ describe('Routes /api/players', () => {
         deaths: 4,
         assists: 6,
         netWorth: 30000,
+        matchMode: 'ranked',
+        gameMode: 'normal',
       });
-      expect(res.body.items[2]).toMatchObject({ heroName: 'Seven', outcome: 'loss' });
+      // Mode inconnu (0) → null ; Street Brawl reconnu.
+      expect(res.body.items[1]).toMatchObject({ matchMode: null, gameMode: 'street_brawl' });
+      expect(res.body.items[2]).toMatchObject({
+        heroName: 'Seven',
+        outcome: 'loss',
+        matchMode: 'unranked',
+      });
       expect(res.body.nextCursor).toBeNull();
       expect(res.body.meta).toMatchObject({ isStale: false, isPartial: false });
+    });
+
+    it('copie en cache antérieure aux modes de jeu → matchMode et gameMode null', async () => {
+      mockAll();
+      await request(app).get(`/api/players/${STEAM_ID}/matches`);
+      // Simule une copie écrite avant l'ajout des champs.
+      const stored = await ApiCacheModel.findOne({ key: /^history:/ }).lean();
+      const legacy = (stored?.payload as Record<string, unknown>[]).map(
+        ({ matchMode: _m, gameMode: _g, ...rest }) => rest,
+      );
+      await ApiCacheModel.updateOne({ _id: stored?._id }, { $set: { payload: legacy } });
+      const res = await request(app).get(`/api/players/${STEAM_ID}/matches`);
+      expect(res.body.items[0]).toMatchObject({ matchMode: null, gameMode: null });
     });
 
     it('pagination par curseur opaque sans doublon ni trou', async () => {

@@ -3,7 +3,9 @@ import type { DeadlockApi } from '../../integrations/deadlock/deadlock.api';
 import type { RawHeroAnalytics } from '../../integrations/deadlock/deadlock.schemas';
 import { notFound } from '../../shared/errors';
 import { accountIdToSteamId } from '../../shared/schemas';
+import { toGameMode, toMatchMode } from '../../integrations/deadlock/game-modes';
 import { dataMeta, type CatalogService } from '../catalog/catalog.service';
+import { rankFromBadge } from '../catalog/ranks';
 
 export const LEADERBOARD_REGIONS = ['Europe', 'Asia', 'NAmerica', 'SAmerica', 'Oceania'] as const;
 export type LeaderboardRegion = (typeof LEADERBOARD_REGIONS)[number];
@@ -110,24 +112,49 @@ export function createMetaService(deadlock: DeadlockApi, catalog: CatalogService
 
   return {
     async leaderboard(region: LeaderboardRegion) {
-      const [board, heroes] = await Promise.all([
-        cached(`leaderboard:${region}`, { ttlMs: TTL.leaderboard }, async () =>
-          (await deadlock.getLeaderboard(region)).slice(0, LEADERBOARD_SIZE),
-        ),
+      const [board, heroes, tiers] = await Promise.all([
+        // Clé v2 : le cache contient aussi les badges.
+        cached(`leaderboard:v2:${region}`, { ttlMs: TTL.leaderboard }, async () => {
+          const entries = (await deadlock.getLeaderboard(region)).slice(0, LEADERBOARD_SIZE);
+          // Rang seulement pour les pseudos reliés à un compte unique, en un seul appel.
+          const unique = entries.flatMap((e) =>
+            e.possible_account_ids?.length === 1 ? e.possible_account_ids : [],
+          );
+          const badges = await deadlock
+            .getPlayerBadges(unique)
+            .then((map) => Object.fromEntries(map) as Record<string, number>)
+            .catch(() => null);
+          return { entries, badges };
+        }),
         heroIndex(),
+        catalog.ranks().catch(() => null),
       ]);
       const index = heroes?.data ?? {};
+      const { entries, badges } = board.data;
+      let missingRank = false;
       return {
         region,
-        items: board.data.map((entry, position) => {
+        items: entries.map((entry, position) => {
           const ids = entry.possible_account_ids ?? [];
+          const accountId = ids.length === 1 ? ids[0] : undefined;
+          const badgeId = accountId ? badges?.[accountId] : undefined;
+          const rank = badgeId && tiers ? rankFromBadge(badgeId, tiers.data) : null;
+          if (badgeId && !tiers) missingRank = true;
           return {
             rank: entry.rank ?? position + 1,
             displayName: entry.account_name ?? '',
             // Relier à un profil seulement si la source est univoque.
-            steamId: ids.length === 1 && ids[0] ? accountIdToSteamId(ids[0]) : null,
-            // La source ne fournit pas le rang de chaque joueur (voir HANDOFF).
-            badge: null,
+            steamId: accountId ? accountIdToSteamId(accountId) : null,
+            // Rang connu seulement pour un compte univoque ayant joué en classé (voir HANDOFF).
+            badge:
+              rank?.tier != null && rank.subrank != null && rank.name
+                ? {
+                    tier: rank.tier,
+                    subrank: rank.subrank,
+                    name: rank.name,
+                    imageUrl: rank.imageUrl,
+                  }
+                : null,
             topHeroes: [...new Set(entry.top_hero_ids ?? [])].slice(0, 3).map((heroId) => ({
               heroId,
               name: index[heroId]?.name ?? `Héros #${heroId}`,
@@ -135,7 +162,7 @@ export function createMetaService(deadlock: DeadlockApi, catalog: CatalogService
             })),
           };
         }),
-        meta: { ...dataMeta(board), isPartial: !heroes },
+        meta: { ...dataMeta(board), isPartial: !heroes || !badges || missingRank },
       };
     },
 
@@ -163,7 +190,8 @@ export function createMetaService(deadlock: DeadlockApi, catalog: CatalogService
     },
 
     async match(matchId: string) {
-      const detail = await cached(`match:${matchId}`, { ttlMs: TTL.match }, async () => {
+      // Clé v2 : les copies antérieures n'ont pas les modes de jeu.
+      const detail = await cached(`match:v2:${matchId}`, { ttlMs: TTL.match }, async () => {
         const info = await deadlock.getMatchMetadata(matchId);
         if (!info) return null;
         const accountIds = info.players
@@ -211,6 +239,8 @@ export function createMetaService(deadlock: DeadlockApi, catalog: CatalogService
           matchId,
           playedAt: info.start_time ? new Date(info.start_time * 1000).toISOString() : null,
           durationSeconds: info.duration_s ?? null,
+          matchMode: toMatchMode(info.match_mode),
+          gameMode: toGameMode(info.game_mode),
           winningSide,
           teams,
         },

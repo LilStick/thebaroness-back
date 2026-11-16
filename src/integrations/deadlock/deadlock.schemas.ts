@@ -29,6 +29,10 @@ export const matchHistoryEntrySchema = z.object({
   player_match_outcome: z.number().int(),
   /** Badge affiché en partie classée : `tier * 10 + subrank` (ex. 113 = tier 11, sous-rang 3). */
   ranked_display_badge: z.number().int().nonnegative().nullish(),
+  /** Index de `ActiveMatchMode` (1 = unranked, 4 = ranked…), voir game-modes.ts. */
+  match_mode: z.number().int().nullish(),
+  /** Index de `ActiveMatchGameMode` (1 = normal, 4 = street_brawl…). */
+  game_mode: z.number().int().nullish(),
 });
 export const matchHistorySchema = z.array(matchHistoryEntrySchema);
 export type RawMatchHistoryEntry = z.infer<typeof matchHistoryEntrySchema>;
@@ -107,6 +111,17 @@ export const leaderboardSchema = z.object({
 });
 export type RawLeaderboard = z.infer<typeof leaderboardSchema>;
 
+/**
+ * `GET /v1/players/rank` (lot, ≤ 1000 comptes) : rang à la fin de la dernière partie classée.
+ * `badge` = `tier * 10 + subrank`, 0 si aucun rang connu.
+ */
+export const playerRanksSchema = z.array(
+  z.object({
+    account_id: z.number().int().nonnegative(),
+    badge: z.number().int().nonnegative().nullish(),
+  }),
+);
+
 /** `GET /v1/matches/{id}/metadata` (≈ 1,3 Mo) : seuls les champs utiles sont conservés. */
 export const matchMetadataSchema = z.object({
   match_info: z.object({
@@ -114,6 +129,8 @@ export const matchMetadataSchema = z.object({
     start_time: z.number().int().nullish(),
     duration_s: z.number().int().nullish(),
     winning_team: z.number().int().nullish(),
+    match_mode: z.number().int().nullish(),
+    game_mode: z.number().int().nullish(),
     players: z.array(
       z.object({
         account_id: z.number().int().nullish(),
