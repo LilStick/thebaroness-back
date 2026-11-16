@@ -1,11 +1,17 @@
 import { Router, type RequestHandler } from 'express';
+import { z } from 'zod';
 import { getUserId } from '../../middleware/require-auth';
 import { objectIdSchema } from '../../shared/schemas';
 import { parse } from '../../shared/validation';
+import { COMPARE_PERIODS, type GroupCompare } from './group.compare';
 import { createGroupSchema, updateGroupSchema } from './group.schemas';
 import { groupService as service } from './group.service';
 
-export function createGroupRouter(requireAuth: RequestHandler): Router {
+const compareQuerySchema = z.object({
+  period: z.enum(COMPARE_PERIODS, 'period : 7d, 30d ou season').default('30d'),
+});
+
+export function createGroupRouter(requireAuth: RequestHandler, compare: GroupCompare): Router {
   const router = Router();
   router.use(requireAuth);
 
@@ -20,6 +26,13 @@ export function createGroupRouter(requireAuth: RequestHandler): Router {
 
   router.get('/:id', async (req, res) => {
     res.json(await service.get(getUserId(req), parse(objectIdSchema, req.params.id)));
+  });
+
+  // Ordre des contrôles du contrat : id (400), groupe du compte (404), période (400).
+  router.get('/:id/compare', async (req, res) => {
+    const group = await service.get(getUserId(req), parse(objectIdSchema, req.params.id));
+    const { period } = parse(compareQuerySchema, req.query);
+    res.json(await compare(group, period));
   });
 
   router.patch('/:id', async (req, res) => {

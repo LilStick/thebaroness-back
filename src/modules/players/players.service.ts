@@ -265,6 +265,15 @@ export function createPlayersService(deadlock: DeadlockApi, catalog: CatalogServ
       };
     },
 
+    /** Profil et historique bruts d'un joueur (cache partagé), pour la comparaison de groupe. */
+    async member(steamId: string) {
+      const [profile, history] = await Promise.all([
+        requireProfile(steamId),
+        historyOf(steamIdToAccountId(steamId)),
+      ]);
+      return { profile, history };
+    },
+
     /** Statistiques par héros sur les parties disponibles (même source que le profil). */
     async heroes(steamId: string) {
       const [, history, heroes] = await Promise.all([
