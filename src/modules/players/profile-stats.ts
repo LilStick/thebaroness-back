@@ -336,3 +336,54 @@ export const relationshipsQuerySchema = z.object({
     .default(10),
 });
 export type RelationshipsQuery = z.infer<typeof relationshipsQuerySchema>;
+
+/** Tendances : N dernières parties contre les N précédentes (5 à 50, défaut 20). */
+export const trendsQuerySchema = z.object({
+  size: z.coerce
+    .number('size : entier entre 5 et 50')
+    .int('size : entier entre 5 et 50')
+    .min(5, 'size : entier entre 5 et 50')
+    .max(50, 'size : entier entre 5 et 50')
+    .default(20),
+  gameMode: gameModeSchema.default('all'),
+  matchMode: matchModeSchema.default('all'),
+});
+export type TrendsQuery = z.infer<typeof trendsQuerySchema>;
+
+/** Fenêtre du winrate glissant : défini seulement à partir de la 10e partie. */
+export const ROLLING_WINDOW = 10;
+
+/**
+ * `matches` triées de la plus récente à la plus ancienne. Blocs de taille égale : `previous` est
+ * null s'il n'y a pas `size` parties avant les `size` dernières (jamais de comparaison inégale).
+ */
+export function trends(matches: ProfileMatch[], size: number) {
+  const recentList = matches.slice(0, size);
+  const previousList = matches.slice(size, size * 2);
+  const recent = aggregate(recentList);
+  const previous = previousList.length === size ? aggregate(previousList) : null;
+  const diff = (key: 'winRate' | 'kda' | 'avgNetWorthPerMinute') => {
+    const a = recent[key];
+    const b = previous?.[key] ?? null;
+    return a === null || b === null ? null : round2(a - b);
+  };
+  // Winrate glissant sur 10 parties, du plus ancien au plus récent, sur les 2 blocs.
+  const chronological = matches.slice(0, size * 2).reverse();
+  const rolling = chronological.flatMap((m, i) => {
+    if (i < ROLLING_WINDOW - 1) return [];
+    const windowMatches = chronological.slice(i - ROLLING_WINDOW + 1, i + 1);
+    const wins = windowMatches.filter((x) => x.win).length;
+    return [{ at: m.startTime, matchId: m.matchId, winRate: percent(wins, ROLLING_WINDOW) }];
+  });
+  return {
+    recent,
+    previous,
+    delta: {
+      winRate: diff('winRate'),
+      kda: diff('kda'),
+      avgNetWorthPerMinute: diff('avgNetWorthPerMinute'),
+    },
+    rolling,
+    complete: recentList.length === size && previous !== null,
+  };
+}

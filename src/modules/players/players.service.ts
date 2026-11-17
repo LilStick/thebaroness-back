@@ -15,7 +15,10 @@ import {
   type ProfilePeriod,
   rankPoints,
   type RelationshipsQuery,
+  ROLLING_WINDOW,
   selectMatches,
+  trends,
+  type TrendsQuery,
 } from './profile-stats';
 import {
   type GameMode,
@@ -498,6 +501,34 @@ export function createPlayersService(deadlock: DeadlockApi, catalog: CatalogServ
         meta: meta(ranks ? [history, ranks] : [history], {
           isPartial: !ranks || window.seasonUnknown,
         }),
+      };
+    },
+
+    /** Tendances : N dernières parties éligibles contre les N précédentes, winrate glissant. */
+    async trends(steamId: string, query: TrendsQuery) {
+      const [, history] = await Promise.all([
+        requireProfile(steamId),
+        historyOf(steamIdToAccountId(steamId)),
+      ]);
+      const window = periodWindow(undefined, Date.now(), null);
+      const { matches } = selectMatches(history.data, query, window);
+      const result = trends(matches, query.size);
+      const iso = (seconds: number) => new Date(seconds * 1000).toISOString();
+      return {
+        filters: { size: query.size, gameMode: query.gameMode, matchMode: query.matchMode },
+        recent: result.recent,
+        previous: result.previous,
+        delta: result.delta,
+        rolling: result.rolling.map((p) => ({ ...p, at: iso(p.at) })),
+        coverage: {
+          eligibleMatches: matches.length,
+          rollingWindow: ROLLING_WINDOW,
+          notes: [
+            ...(result.complete ? [] : ['insufficient_history']),
+            ...(history.isStale ? ['history_stale'] : []),
+          ],
+        },
+        meta: meta([history]),
       };
     },
 

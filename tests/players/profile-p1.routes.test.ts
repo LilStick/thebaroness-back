@@ -1,6 +1,11 @@
 import request from 'supertest';
 import { ApiCacheModel } from '../../src/database/api-cache';
-import { activityDays, activityWindow, rankPoints } from '../../src/modules/players/profile-stats';
+import {
+  activityDays,
+  activityWindow,
+  rankPoints,
+  trends,
+} from '../../src/modules/players/profile-stats';
 import { buildTestApp } from '../helpers/app';
 import { useTestDb } from '../helpers/db';
 import { createFetchMock, type FetchMock } from '../helpers/fetch-mock';
@@ -373,5 +378,85 @@ describe('Fonctions pures P1', () => {
       '2026-11-17',
     ]);
     expect(days[0]).toEqual({ date: '2026-11-11', matches: 1, wins: 1, losses: 0 });
+  });
+});
+
+describe('Tendances (trends)', () => {
+  const m = (i: number, win: boolean, kills = 2) => ({
+    matchId: String(100 - i),
+    heroId: 1,
+    startTime: 1_000_000 - i * 100,
+    win,
+    duration: 1200,
+    kills,
+    deaths: 1,
+    assists: 0,
+    netWorth: 20000,
+  });
+
+  it('blocs égaux, deltas et winrate glissant défini à partir de la 10e partie', () => {
+    // 10 récentes : 8 victoires ; 10 précédentes : 5 victoires.
+    const recent = Array.from({ length: 10 }, (_, i) => m(i, i < 8, 4));
+    const previous = Array.from({ length: 10 }, (_, i) => m(10 + i, i < 5, 2));
+    const result = trends([...recent, ...previous], 10);
+    expect(result.recent).toMatchObject({ matches: 10, winRate: 80, kda: 4 });
+    expect(result.previous).toMatchObject({ matches: 10, winRate: 50, kda: 2 });
+    expect(result.delta).toEqual({ winRate: 30, kda: 2, avgNetWorthPerMinute: 0 });
+    expect(result.rolling).toHaveLength(11);
+    // Première valeur : les 10 plus anciennes (bloc précédent).
+    expect(result.rolling[0]).toMatchObject({ matchId: String(100 - 10), winRate: 50 });
+    expect(result.rolling.at(-1)).toMatchObject({ matchId: '100', winRate: 80 });
+    expect(result.complete).toBe(true);
+  });
+
+  it('historique insuffisant → previous null, deltas null, glissant vide sous 10 parties', () => {
+    const result = trends(
+      Array.from({ length: 7 }, (_, i) => m(i, true)),
+      5,
+    );
+    expect(result.previous).toBeNull();
+    expect(result.delta).toEqual({ winRate: null, kda: null, avgNetWorthPerMinute: null });
+    expect(result.rolling).toEqual([]);
+    expect(result.complete).toBe(false);
+  });
+});
+
+describe('GET /players/:steamId/trends', () => {
+  useTestDb();
+  let upstream: FetchMock;
+  let app: ReturnType<typeof buildTestApp>;
+  beforeEach(() => {
+    upstream = createFetchMock();
+    app = buildTestApp({}, upstream.fetch);
+  });
+
+  it('20 contre 20 par défaut, filtres de mode, couverture', async () => {
+    const history = Array.from({ length: 45 }, (_, i) =>
+      raw(1000 - i, i / 10, { player_match_outcome: i % 2 ? 2 : 1, match_mode: i < 40 ? 4 : 1 }),
+    );
+    upstream
+      .on(/^\/v1\/players\/steam$/, { body: [PROFILE] })
+      .on(/match-history$/, { body: history });
+    let res = await request(app).get(`/api/players/${STEAM_ID}/trends`);
+    expect(res.status).toBe(200);
+    expect(res.body.filters).toEqual({ size: 20, gameMode: 'all', matchMode: 'all' });
+    expect(res.body.recent.matches).toBe(20);
+    expect(res.body.previous.matches).toBe(20);
+    expect(res.body.rolling).toHaveLength(31);
+    expect(res.body.coverage).toEqual({ eligibleMatches: 45, rollingWindow: 10, notes: [] });
+
+    res = await request(app)
+      .get(`/api/players/${STEAM_ID}/trends`)
+      .query({ size: 25, matchMode: 'ranked' });
+    expect(res.body.previous).toBeNull();
+    expect(res.body.coverage).toMatchObject({
+      eligibleMatches: 40,
+      notes: ['insufficient_history'],
+    });
+    for (const size of [4, 51]) {
+      expect(
+        (await request(app).get(`/api/players/${STEAM_ID}/trends`).query({ size })).status,
+      ).toBe(400);
+    }
   });
 });

@@ -3,14 +3,259 @@
 Fichier de liaison entre le Claude du back (`thebaroness-back`) et celui du front (`thebaroness`).
 Le Claude du front le lit après un `pull` du back. Pendant côté front : `thebaroness/docs/HANDOFF.md`, lu par le back à chaque session.
 
-Dernière mise à jour : 17/11/2026 (voir `git log -- docs/HANDOFF.md` pour le SHA). HANDOFF front relu sur `refonte-ui` au commit `5ec268f` (pack Profil joueur V2). Phase P1 livrée en v1.10.0.
+Dernière mise à jour : 17/11/2026 (voir `git log -- docs/HANDOFF.md` pour le SHA). HANDOFF front relu sur `refonte-ui` au commit `5ec268f` (pack Profil joueur V2). Phases P1 (v1.10.0) et P2 (v1.11.0) livrées.
 
 ## A lire en premier
 
+- **Phase P2 livrée en v1.11.0** (section suivante) : statistiques d'items, paires d'items, builds de héros, tendances 20 contre 20.
 - **Phase P1 livrée en v1.10.0** (section suivante) : détail de partie enrichi, historique de rang, activité, coéquipiers et adversaires, catalogue des items. **Correction de données à lire : l'historique complet inclut désormais les parties anciennes** (voir « Changement de comportement »).
 - **Profil joueur V2, P0 livré en v1.9.0** : section suivante. Contrat : `docs/openapi.yaml` **v1.9.0** (aussi sur `/api/docs`), à recopier dans `src/contracts/openapi.yaml`. Tout est additif : aucun client v1.8 n'est cassé.
 - Production : front `https://thebaroness.4esport.fr` et back `https://api.thebaroness.4esport.fr`. La v1.9.0 n'y sera qu'après le prochain déploiement du back (LilStick).
 - Dépôt GitHub `LilStick/thebaroness-back` (l'ancienne URL `deadlock-tracker-back` redirige).
+
+## Phase P2 : état de livraison (v1.11.0, 17/11/2026)
+
+Les « non faits » de la P1 sont livrés. Etat Git : livré sur `main` du back (issue #83, SHA dans `git log`), vérifié sur données réelles. Production : après le prochain déploiement du back.
+
+| Demande                                                         | Statut       | Route                                                                     |
+| --------------------------------------------------------------- | ------------ | ------------------------------------------------------------------------- |
+| Statistiques d'utilisation des items                            | **Livré**    | `GET /items/stats`, `GET /items/{itemId}/stats`                           |
+| Associations d'items                                            | **Livré**    | `GET /heroes/{heroId}/item-pairs`                                         |
+| Builds de héros                                                 | **Livré**    | `GET /heroes/{heroId}/builds`                                             |
+| Tendances 20 contre 20, winrate glissant                        | **Livré**    | `GET /players/{steamId}/trends`                                           |
+| Ordre des capacités dans les builds, coéquipiers « tous modes » | **Non fait** | sémantique de la source non vérifiable ; la source n'agrège pas les modes |
+
+### `GET /api/items/stats` et `GET /api/items/{itemId}/stats`
+
+- Filtres : `period` `7d` ou `30d` (défaut ; borne basse arrondie à l'heure), `heroId`, `matchMode` (`ranked`, `unranked`, absent = tous). Mode de jeu normal.
+- Agrégats de la source sur les parties analysées : `matches` (parties où l'item a été acheté), `wins`, `losses`, `winRate`, `players` (joueurs distincts), `sold`, `sellRate`, `avgBuyTimeSeconds`, `avgSellTimeSeconds` (null si jamais revendu). Liste triée par `matches`.
+- Un item sous le seuil de la source (20 parties) : `stats: null`, `notes: ["below_source_threshold"]`. Item inconnu du catalogue : 404.
+- Pas de « taux de sélection » : la source ne donne pas le total de parties de la période, il serait inventé.
+
+Exemple réel (Extended Magazine, Celeste, 30 jours) :
+
+```json
+{
+  "itemId": 1548066885,
+  "filters": {
+    "period": "30d",
+    "heroId": 81,
+    "matchMode": "all",
+    "gameMode": "normal",
+    "from": "2026-10-18T13:00:00.000Z"
+  },
+  "stats": {
+    "itemId": 1548066885,
+    "matches": 17212,
+    "wins": 7434,
+    "losses": 9778,
+    "winRate": 43.19,
+    "players": 9721,
+    "sold": 14165,
+    "sellRate": 82.3,
+    "avgBuyTimeSeconds": 783,
+    "avgSellTimeSeconds": 1081
+  },
+  "notes": [],
+  "meta": {
+    "fetchedAt": "2026-11-17T13:23:37.919Z",
+    "sourceUpdatedAt": null,
+    "isStale": false,
+    "isPartial": false
+  }
+}
+```
+
+### `GET /api/heroes/{heroId}/builds?sort=favorites&limit=10`
+
+- `sort` : `favorites` (défaut), `weekly_favorites`, `updated_at`, `published_at`. Une entrée par build : sa version la plus récente (la source renvoie une ligne par version ; son option `only_latest` écarte des builds populaires, elle n'est donc pas utilisée).
+- **La source ne remplit que le compteur du tri demandé** : `favorites` avec `sort=favorites`, `weeklyFavorites` avec `sort=weekly_favorites` ; l'autre vaut `null`.
+- `categories[].name` : clés Valve rendues lisibles (`#Citadel_HeroBuilds_EarlyGame` → `Early Game`) ou nom libre de l'auteur. `items[].itemId` à résoudre avec `/items`.
+- Héros inconnu : 404.
+
+Exemple réel (Celeste, tronqué) :
+
+```json
+{
+  "heroId": 81,
+  "sort": "favorites",
+  "items": [
+    {
+      "buildId": 448516,
+      "heroId": 81,
+      "name": "TOP 1 CELESTE NA - SHMUCK",
+      "description": "is there really even a shmuck meta anymore? my haters tell me that i am a failur…",
+      "authorSteamId": "76561198117895122",
+      "language": 0,
+      "version": 101,
+      "publishedAt": "2026-10-03T00:42:28.000Z",
+      "updatedAt": "2026-10-03T00:42:28.000Z",
+      "favorites": 50564,
+      "weeklyFavorites": null,
+      "categories": [
+        {
+          "name": "Early Game",
+          "description": null,
+          "items": [
+            {
+              "itemId": 3077079169,
+              "annotation": null
+            },
+            {
+              "itemId": 2829638276,
+              "annotation": null
+            }
+          ]
+        },
+        {
+          "name": "4.8K Green",
+          "description": null,
+          "items": [
+            {
+              "itemId": 2603935618,
+              "annotation": null
+            },
+            {
+              "itemId": 112198670,
+              "annotation": null
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "meta": {
+    "fetchedAt": "2026-11-17T13:25:32.417Z",
+    "sourceUpdatedAt": null,
+    "isStale": false,
+    "isPartial": false
+  }
+}
+```
+
+### `GET /api/heroes/{heroId}/item-pairs`
+
+- Paires d'objets achetés ensemble par ce héros (source : `item-permutation-stats`), `itemIds` croissants, par volume. Filtres `period`, `matchMode`, `itemId` (paires qui le contiennent), `limit` 1 à 100 (défaut 20).
+
+```json
+{
+  "heroId": 81,
+  "filters": {
+    "period": "30d",
+    "matchMode": "all",
+    "gameMode": "normal",
+    "itemId": null,
+    "from": "2026-10-18T13:00:00.000Z"
+  },
+  "items": [
+    {
+      "itemIds": [2829638276, 3077079169],
+      "matches": 1488532,
+      "wins": 723175,
+      "losses": 765357,
+      "winRate": 48.58
+    },
+    {
+      "itemIds": [754480263, 1193964439],
+      "matches": 1425094,
+      "wins": 704046,
+      "losses": 721048,
+      "winRate": 49.4
+    }
+  ],
+  "meta": {
+    "fetchedAt": "2026-11-17T13:23:38.401Z",
+    "sourceUpdatedAt": null,
+    "isStale": false,
+    "isPartial": false
+  }
+}
+```
+
+### `GET /api/players/{steamId}/trends?size=20`
+
+- `size` 5 à 50 (défaut 20), `gameMode`, `matchMode`. `recent` = les `size` dernières parties éligibles, `previous` = les `size` d'avant (**null** s'il n'y en a pas assez : jamais de comparaison inégale, note `insufficient_history`). `delta = recent − previous` (winRate, kda, avgNetWorthPerMinute).
+- `rolling` : winrate des 10 dernières parties à chaque partie, sur les deux blocs, du plus ancien au plus récent, **à partir de la 10e partie seulement**.
+
+Exemple réel (FunKa, `rolling` tronqué) :
+
+```json
+{
+  "filters": {
+    "size": 20,
+    "gameMode": "all",
+    "matchMode": "all"
+  },
+  "recent": {
+    "matches": 20,
+    "wins": 12,
+    "losses": 8,
+    "winRate": 60,
+    "kills": 144,
+    "deaths": 127,
+    "assists": 243,
+    "kda": 3.05,
+    "kdaSampleSize": 20,
+    "avgNetWorthPerMinute": 1145.27,
+    "netWorthPerMinuteSampleSize": 20,
+    "avgDurationSeconds": 2259,
+    "durationSampleSize": 20
+  },
+  "previous": {
+    "matches": 20,
+    "wins": 9,
+    "losses": 11,
+    "winRate": 45,
+    "kills": 183,
+    "deaths": 124,
+    "assists": 291,
+    "kda": 3.82,
+    "kdaSampleSize": 20,
+    "avgNetWorthPerMinute": 1180.81,
+    "netWorthPerMinuteSampleSize": 20,
+    "avgDurationSeconds": 2374,
+    "durationSampleSize": 20
+  },
+  "delta": {
+    "winRate": 15,
+    "kda": -0.77,
+    "avgNetWorthPerMinute": -35.54
+  },
+  "rolling": [
+    {
+      "at": "2026-11-13T22:45:40.000Z",
+      "matchId": "136900755",
+      "winRate": 70
+    },
+    {
+      "at": "2026-11-13T23:38:55.000Z",
+      "matchId": "136927164",
+      "winRate": 80
+    }
+  ],
+  "coverage": {
+    "eligibleMatches": 531,
+    "rollingWindow": 10,
+    "notes": []
+  },
+  "meta": {
+    "fetchedAt": "2026-11-17T13:28:48.938Z",
+    "sourceUpdatedAt": null,
+    "isStale": false,
+    "isPartial": false
+  }
+}
+```
+
+### Cache
+
+| Clé                                    | Contenu                        | TTL |
+| -------------------------------------- | ------------------------------ | --- |
+| `item-stats:v1:<borne>:<héros>:<type>` | statistiques de tous les items | 1 h |
+| `item-pairs:v1:<borne>:<héros>:<type>` | paires d'un héros              | 1 h |
+| `builds:v2:<héros>:<tri>`              | builds dédoublonnés            | 1 h |
+
+`/trends` : aucun cache propre (calcul sur `history:v2`).
 
 ## Phase P1 : état de livraison (v1.10.0, 17/11/2026)
 
@@ -305,7 +550,7 @@ Exemple réel (FunKa, Celeste, listes tronquées) :
 
 `/rank-history` et `/activity` n'ont pas de cache propre : calcul de quelques millisecondes sur `history:v2`.
 
-### P2 : spécification Items et Builds (non commencé)
+### P2 : spécification Items et Builds (livrée en v1.11.0, voir plus haut)
 
 Sources vérifiées chez Deadlock API : `/v1/analytics/item-stats` (taux de victoire et d'achat par item, filtrables par héros, mode, badge, période), `/v1/analytics/item-permutation-stats` (associations), `/v1/analytics/item-flow-stats` (ordre d'achat), `/v1/analytics/build-item-stats`, `/v1/analytics/hero-build-stats`, `/v1/builds` (builds publiés, recherche) et `/v1/assets/build-tags`, `/v1/patches` (notes de patch).
 Plan : `GET /items/{itemId}/stats?period=&heroId=&rankTier=` (cache 30 min par jeu de filtres, dénominateurs publiés), `GET /heroes/{heroId}/builds` (builds publiés, cache 1 h), `GET /items/{itemId}/combos` ; mêmes conventions (`null` = inconnu, `meta`, `isPartial`).
@@ -599,6 +844,8 @@ npm run dev             # proxy Vite /api vers http://localhost:3001
 Les routes catalogue et joueurs interrogent la vraie API Deadlock : prévoir une connexion internet. En cas de limitation par la source, les réponses passent en `isStale` ou `isPartial`, ou en 503 avec `Retry-After`.
 
 ## Journal des changements de contrat (du plus récent au plus ancien)
+
+- 17/11/2026 : **v1.11.0** (P2) : `/items/stats`, `/items/{itemId}/stats`, `/heroes/{heroId}/builds`, `/heroes/{heroId}/item-pairs`, `/players/{steamId}/trends`. Additif.
 
 - 17/11/2026 : **v1.10.0** (P1) : `/players/{steamId}/rank-history`, `/activity`, `/relationships`, `/items`, `/items/{itemId}` ; `MatchPlayer` (`mvpRank`, `killParticipation`, `stats`, `purchases`, `finalItemIds`, `abilityUpgrades`) et `teams[].averageBadge`, `averageRankName`. Correction : parties anciennes (`outcome` 0) incluses dans l'historique. Additif pour les formes.
 

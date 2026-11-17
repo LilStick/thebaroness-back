@@ -5,7 +5,7 @@ import type { OpenAPIV3_1 as O } from 'openapi-types';
  * Servi sur /api/openapi.json et /api/docs ; exporté dans docs/openapi.yaml (`npm run openapi`).
  * Versionnement : majeure = changement incompatible, mineure = ajout, patch = correction.
  */
-export const OPENAPI_VERSION = '1.10.0';
+export const OPENAPI_VERSION = '1.11.0';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const response = (name: string) => ({ $ref: `#/components/responses/${name}` });
@@ -611,6 +611,239 @@ export const openApiDocument: O.Document = {
         ],
         responses: {
           '200': { description: 'Relations', content: json(ref('PlayerRelationships')) },
+          '400': response('BadRequest'),
+          '404': response('NotFound'),
+          '429': response('RateLimited'),
+          '503': response('ServiceUnavailable'),
+        },
+      },
+    },
+    '/items/stats': {
+      get: {
+        tags: ['Catalogue'],
+        summary: 'Statistiques d’utilisation des items',
+        description:
+          'Agrégats Deadlock API (`/v1/analytics/item-stats`, mode de jeu normal) sur les parties analysées : achats, victoires, joueurs, reventes, heures moyennes. Seuil de la source : 20 parties par item. Cache 1 h par jeu de filtres.',
+        parameters: [
+          {
+            name: 'period',
+            in: 'query',
+            description: 'Borne basse arrondie à l’heure (vers le passé)',
+            schema: { type: 'string', enum: ['7d', '30d'], default: '30d' },
+          },
+          {
+            name: 'matchMode',
+            in: 'query',
+            description: 'Absent : tous types de partie',
+            schema: { type: 'string', enum: ['ranked', 'unranked'] },
+          },
+          { name: 'heroId', in: 'query', schema: { type: 'integer', minimum: 1 } },
+        ],
+        responses: {
+          '200': {
+            description: 'Statistiques',
+            content: json({
+              type: 'object',
+              required: ['filters', 'items', 'meta'],
+              properties: {
+                filters: ref('AnalyticsFilters'),
+                items: { type: 'array', items: ref('ItemStats') },
+                meta: ref('DataMeta'),
+              },
+            }),
+          },
+          '400': response('BadRequest'),
+          '404': response('NotFound'),
+          '429': response('RateLimited'),
+          '503': response('ServiceUnavailable'),
+        },
+      },
+    },
+    '/items/{itemId}/stats': {
+      get: {
+        tags: ['Catalogue'],
+        summary: 'Statistiques d’un item',
+        description:
+          '`stats: null` et note `below_source_threshold` si l’item a moins de 20 parties sur les filtres. 404 si l’item n’existe pas dans le catalogue.',
+        parameters: [
+          { name: 'itemId', in: 'path', required: true, schema: { type: 'integer', minimum: 0 } },
+          {
+            name: 'period',
+            in: 'query',
+            description: 'Borne basse arrondie à l’heure (vers le passé)',
+            schema: { type: 'string', enum: ['7d', '30d'], default: '30d' },
+          },
+          {
+            name: 'matchMode',
+            in: 'query',
+            description: 'Absent : tous types de partie',
+            schema: { type: 'string', enum: ['ranked', 'unranked'] },
+          },
+          { name: 'heroId', in: 'query', schema: { type: 'integer', minimum: 1 } },
+        ],
+        responses: {
+          '200': {
+            description: 'Statistiques',
+            content: json({
+              type: 'object',
+              required: ['itemId', 'filters', 'stats', 'notes', 'meta'],
+              properties: {
+                itemId: { type: 'integer' },
+                filters: ref('AnalyticsFilters'),
+                stats: { oneOf: [{ type: 'null' }, ref('ItemStats')] },
+                notes: {
+                  type: 'array',
+                  items: { type: 'string', enum: ['below_source_threshold'] },
+                },
+                meta: ref('DataMeta'),
+              },
+            }),
+          },
+          '400': response('BadRequest'),
+          '404': response('NotFound'),
+          '429': response('RateLimited'),
+          '503': response('ServiceUnavailable'),
+        },
+      },
+    },
+    '/heroes/{heroId}/builds': {
+      get: {
+        tags: ['Catalogue'],
+        summary: 'Builds publiés d’un héros',
+        description:
+          'Builds publiés en jeu (`/v1/builds`), une entrée par build (sa version la plus récente). La source ne renseigne que le compteur du tri demandé : `favorites` est rempli avec `sort=favorites`, `weeklyFavorites` avec `sort=weekly_favorites`. Les `itemId` se résolvent avec `/items`. Cache 1 h.',
+        parameters: [
+          { name: 'heroId', in: 'path', required: true, schema: { type: 'integer', minimum: 1 } },
+          {
+            name: 'sort',
+            in: 'query',
+            schema: {
+              type: 'string',
+              enum: ['favorites', 'weekly_favorites', 'updated_at', 'published_at'],
+              default: 'favorites',
+            },
+          },
+          {
+            name: 'limit',
+            in: 'query',
+            schema: { type: 'integer', minimum: 1, maximum: 50, default: 10 },
+          },
+        ],
+        responses: {
+          '200': {
+            description: 'Builds',
+            content: json({
+              type: 'object',
+              required: ['heroId', 'sort', 'items', 'meta'],
+              properties: {
+                heroId: { type: 'integer' },
+                sort: { type: 'string' },
+                items: { type: 'array', items: ref('HeroBuild') },
+                meta: ref('DataMeta'),
+              },
+            }),
+          },
+          '400': response('BadRequest'),
+          '404': response('NotFound'),
+          '429': response('RateLimited'),
+          '503': response('ServiceUnavailable'),
+        },
+      },
+    },
+    '/heroes/{heroId}/item-pairs': {
+      get: {
+        tags: ['Catalogue'],
+        summary: 'Paires d’items achetées ensemble par un héros',
+        description:
+          'Agrégats Deadlock API (`item-permutation-stats`, paires, mode normal), par volume décroissant. `itemId` ne garde que les paires qui le contiennent. Cache 1 h.',
+        parameters: [
+          { name: 'heroId', in: 'path', required: true, schema: { type: 'integer', minimum: 1 } },
+          {
+            name: 'period',
+            in: 'query',
+            description: 'Borne basse arrondie à l’heure (vers le passé)',
+            schema: { type: 'string', enum: ['7d', '30d'], default: '30d' },
+          },
+          {
+            name: 'matchMode',
+            in: 'query',
+            description: 'Absent : tous types de partie',
+            schema: { type: 'string', enum: ['ranked', 'unranked'] },
+          },
+          { name: 'itemId', in: 'query', schema: { type: 'integer', minimum: 0 } },
+          {
+            name: 'limit',
+            in: 'query',
+            schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
+          },
+        ],
+        responses: {
+          '200': {
+            description: 'Paires',
+            content: json({
+              type: 'object',
+              required: ['heroId', 'filters', 'items', 'meta'],
+              properties: {
+                heroId: { type: 'integer' },
+                filters: {
+                  type: 'object',
+                  required: ['period', 'matchMode', 'gameMode', 'itemId', 'from'],
+                  properties: {
+                    period: { type: 'string', enum: ['7d', '30d'] },
+                    matchMode: { type: 'string', enum: ['all', 'ranked', 'unranked'] },
+                    gameMode: { type: 'string', enum: ['normal'] },
+                    itemId: nullable('integer'),
+                    from: { type: 'string', format: 'date-time' },
+                  },
+                },
+                items: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    required: ['itemIds', 'matches', 'wins', 'losses', 'winRate'],
+                    properties: {
+                      itemIds: {
+                        type: 'array',
+                        minItems: 2,
+                        maxItems: 2,
+                        items: { type: 'integer' },
+                      },
+                      matches: { type: 'integer' },
+                      wins: { type: 'integer' },
+                      losses: { type: 'integer' },
+                      winRate: nullable('number'),
+                    },
+                  },
+                },
+                meta: ref('DataMeta'),
+              },
+            }),
+          },
+          '400': response('BadRequest'),
+          '404': response('NotFound'),
+          '429': response('RateLimited'),
+          '503': response('ServiceUnavailable'),
+        },
+      },
+    },
+    '/players/{steamId}/trends': {
+      get: {
+        tags: ['Joueurs'],
+        summary: 'Tendances : N dernières parties contre les N précédentes',
+        description:
+          'Depuis l’historique en cache. `previous` est null s’il n’y a pas `size` parties avant les `size` dernières (jamais de comparaison inégale). Winrate glissant sur 10 parties, défini à partir de la 10e partie.',
+        parameters: [
+          steamIdParam,
+          {
+            name: 'size',
+            in: 'query',
+            schema: { type: 'integer', minimum: 5, maximum: 50, default: 20 },
+          },
+          gameModeParam,
+          matchModeParam,
+        ],
+        responses: {
+          '200': { description: 'Tendances', content: json(ref('PlayerTrends')) },
           '400': response('BadRequest'),
           '404': response('NotFound'),
           '429': response('RateLimited'),
@@ -1610,6 +1843,222 @@ export const openApiDocument: O.Document = {
               'Moyenne des ratios par partie `netWorth / (durationSeconds / 60)` (net worth connu, durée > 0).',
           }),
           netWorthPerMinuteSampleSize: sampleSize('le net worth par minute'),
+        },
+      },
+      AnalyticsFilters: {
+        type: 'object',
+        required: ['period', 'heroId', 'matchMode', 'gameMode', 'from'],
+        properties: {
+          period: { type: 'string', enum: ['7d', '30d'] },
+          heroId: nullable('integer'),
+          matchMode: { type: 'string', enum: ['all', 'ranked', 'unranked'] },
+          gameMode: { type: 'string', enum: ['normal'] },
+          from: { type: 'string', format: 'date-time', description: 'Borne basse effective' },
+        },
+      },
+      ItemStats: {
+        type: 'object',
+        required: [
+          'itemId',
+          'matches',
+          'wins',
+          'losses',
+          'winRate',
+          'players',
+          'sold',
+          'sellRate',
+          'avgBuyTimeSeconds',
+          'avgSellTimeSeconds',
+        ],
+        properties: {
+          itemId: { type: 'integer' },
+          matches: { type: 'integer', description: 'Parties où l’item a été acheté' },
+          wins: { type: 'integer' },
+          losses: { type: 'integer' },
+          winRate: nullable('number'),
+          players: nullable('integer', { description: 'Joueurs distincts' }),
+          sold: nullable('integer', { description: 'Parties où il a été revendu' }),
+          sellRate: nullable('number', { description: '`sold / matches × 100`' }),
+          avgBuyTimeSeconds: nullable('integer'),
+          avgSellTimeSeconds: nullable('integer', { description: 'null si jamais revendu' }),
+        },
+      },
+      HeroBuild: {
+        type: 'object',
+        required: [
+          'buildId',
+          'heroId',
+          'name',
+          'description',
+          'authorSteamId',
+          'language',
+          'version',
+          'publishedAt',
+          'updatedAt',
+          'favorites',
+          'weeklyFavorites',
+          'categories',
+        ],
+        properties: {
+          buildId: { type: 'integer' },
+          heroId: { type: 'integer' },
+          name: nullable('string'),
+          description: nullable('string'),
+          authorSteamId: nullable('string'),
+          language: nullable('integer', { description: 'Langue Valve (0 = anglais)' }),
+          version: nullable('integer'),
+          publishedAt: nullable('string', { format: 'date-time' }),
+          updatedAt: nullable('string', { format: 'date-time' }),
+          favorites: nullable('integer', { description: 'Renseigné avec `sort=favorites`' }),
+          weeklyFavorites: nullable('integer', {
+            description: 'Renseigné avec `sort=weekly_favorites`',
+          }),
+          categories: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['name', 'description', 'items'],
+              properties: {
+                name: nullable('string', {
+                  description: 'Ex. « Early Game », ou nom libre de l’auteur',
+                }),
+                description: nullable('string'),
+                items: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    required: ['itemId', 'annotation'],
+                    properties: { itemId: { type: 'integer' }, annotation: nullable('string') },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      PlayerTrends: {
+        type: 'object',
+        required: ['filters', 'recent', 'previous', 'delta', 'rolling', 'coverage', 'meta'],
+        properties: {
+          filters: {
+            type: 'object',
+            required: ['size', 'gameMode', 'matchMode'],
+            properties: {
+              size: { type: 'integer' },
+              gameMode: { type: 'string', enum: ['all', 'normal', 'street_brawl'] },
+              matchMode: { type: 'string', enum: ['all', 'ranked', 'unranked'] },
+            },
+          },
+          recent: {
+            type: 'object',
+            description: 'Agrégat d’un bloc (mêmes règles que `/overview`)',
+            required: [
+              'matches',
+              'wins',
+              'losses',
+              'winRate',
+              'kills',
+              'deaths',
+              'assists',
+              'kda',
+              'kdaSampleSize',
+              'avgNetWorthPerMinute',
+              'netWorthPerMinuteSampleSize',
+              'avgDurationSeconds',
+              'durationSampleSize',
+            ],
+            properties: {
+              matches: { type: 'integer' },
+              wins: { type: 'integer' },
+              losses: { type: 'integer' },
+              winRate: nullable('number'),
+              kills: nullable('integer'),
+              deaths: nullable('integer'),
+              assists: nullable('integer'),
+              kda: nullable('number'),
+              kdaSampleSize: { type: 'integer' },
+              avgNetWorthPerMinute: nullable('number'),
+              netWorthPerMinuteSampleSize: { type: 'integer' },
+              avgDurationSeconds: nullable('integer'),
+              durationSampleSize: { type: 'integer' },
+            },
+          },
+          previous: {
+            oneOf: [
+              { type: 'null' },
+              {
+                type: 'object',
+                description: 'Agrégat d’un bloc (mêmes règles que `/overview`)',
+                required: [
+                  'matches',
+                  'wins',
+                  'losses',
+                  'winRate',
+                  'kills',
+                  'deaths',
+                  'assists',
+                  'kda',
+                  'kdaSampleSize',
+                  'avgNetWorthPerMinute',
+                  'netWorthPerMinuteSampleSize',
+                  'avgDurationSeconds',
+                  'durationSampleSize',
+                ],
+                properties: {
+                  matches: { type: 'integer' },
+                  wins: { type: 'integer' },
+                  losses: { type: 'integer' },
+                  winRate: nullable('number'),
+                  kills: nullable('integer'),
+                  deaths: nullable('integer'),
+                  assists: nullable('integer'),
+                  kda: nullable('number'),
+                  kdaSampleSize: { type: 'integer' },
+                  avgNetWorthPerMinute: nullable('number'),
+                  netWorthPerMinuteSampleSize: { type: 'integer' },
+                  avgDurationSeconds: nullable('integer'),
+                  durationSampleSize: { type: 'integer' },
+                },
+              },
+            ],
+          },
+          delta: {
+            type: 'object',
+            description: '`recent − previous`, null si l’un des deux est inconnu',
+            required: ['winRate', 'kda', 'avgNetWorthPerMinute'],
+            properties: {
+              winRate: nullable('number'),
+              kda: nullable('number'),
+              avgNetWorthPerMinute: nullable('number'),
+            },
+          },
+          rolling: {
+            type: 'array',
+            description:
+              'Winrate des 10 dernières parties à chaque partie, du plus ancien au plus récent',
+            items: {
+              type: 'object',
+              required: ['at', 'matchId', 'winRate'],
+              properties: {
+                at: { type: 'string', format: 'date-time' },
+                matchId: { type: 'string' },
+                winRate: { type: 'number' },
+              },
+            },
+          },
+          coverage: {
+            type: 'object',
+            required: ['eligibleMatches', 'rollingWindow', 'notes'],
+            properties: {
+              eligibleMatches: { type: 'integer' },
+              rollingWindow: { type: 'integer' },
+              notes: {
+                type: 'array',
+                items: { type: 'string', enum: ['insufficient_history', 'history_stale'] },
+              },
+            },
+          },
+          meta: ref('DataMeta'),
         },
       },
       CatalogItem: {

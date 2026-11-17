@@ -25,6 +25,12 @@ import {
   type RawItemAsset,
   relationStatsSchema,
   type RawRelationStats,
+  buildsSchema,
+  itemPermutationsSchema,
+  itemStatsSchema,
+  type RawBuilds,
+  type RawItemPermutations,
+  type RawItemStats,
 } from './deadlock.schemas';
 
 /** Résumé de joueur normalisé (§19.4 A) : aucun champ brut de Deadlock API ne sort d'ici. */
@@ -71,6 +77,22 @@ function toSteamProfile(raw: RawSteamProfile): SteamProfile {
 const RANK_BATCH = 500;
 /** Catalogue complet des items : plusieurs Mo. */
 const ITEMS_TIMEOUT_MS = 30_000;
+/** Agrégats analytiques et recherche de builds : calcul côté source. */
+const ANALYTICS_TIMEOUT_MS = 20_000;
+
+/** Filtres communs des agrégats d'items (mode de jeu normal). */
+export interface AnalyticsFilter {
+  minTimestamp: number;
+  heroId?: number;
+  matchMode?: 'ranked' | 'unranked';
+}
+
+const analyticsQuery = ({ minTimestamp, heroId, matchMode }: AnalyticsFilter) => ({
+  game_mode: 'normal',
+  min_unix_timestamp: minTimestamp,
+  hero_id: heroId,
+  match_mode: matchMode === undefined ? undefined : matchMode === 'ranked' ? 'Ranked' : 'Unranked',
+});
 /** Agrégats calculés côté source sur tout l'historique : parfois lents. */
 const RELATIONS_TIMEOUT_MS = 15_000;
 /** Un lot de 500 comptes peut dépasser le délai par défaut (6 s) quand la source est froide. */
@@ -254,6 +276,45 @@ export function createDeadlockApi(client: DeadlockClient) {
           },
           relationStatsSchema,
           { timeoutMs: RELATIONS_TIMEOUT_MS },
+        )) ?? []
+      );
+    },
+
+    /**
+     * `GET /v1/analytics/item-stats` (mode normal) depuis `minTimestamp`, optionnellement pour un
+     * héros et un type de partie (`Ranked` / `Unranked`). Seuil de la source : 20 parties par item.
+     */
+    async getItemStats(filter: AnalyticsFilter): Promise<RawItemStats> {
+      return (
+        (await client.get('/v1/analytics/item-stats', analyticsQuery(filter), itemStatsSchema, {
+          timeoutMs: ANALYTICS_TIMEOUT_MS,
+        })) ?? []
+      );
+    },
+
+    /** `GET /v1/analytics/item-permutation-stats` : paires d'items d'un héros (`comb_size=2`). */
+    async getItemPairs(filter: AnalyticsFilter & { heroId: number }): Promise<RawItemPermutations> {
+      return (
+        (await client.get(
+          '/v1/analytics/item-permutation-stats',
+          { ...analyticsQuery(filter), comb_size: 2 },
+          itemPermutationsSchema,
+          { timeoutMs: ANALYTICS_TIMEOUT_MS },
+        )) ?? []
+      );
+    },
+
+    /**
+     * `GET /v1/builds` : lignes de builds publiés d'un héros (une ligne par VERSION de build), triées
+     * par la source. `only_latest` n'est pas utilisé : il écarte des builds populaires.
+     */
+    async getHeroBuilds(heroId: number, sortBy: string, limit: number): Promise<RawBuilds> {
+      return (
+        (await client.get(
+          '/v1/builds',
+          { hero_id: heroId, sort_by: sortBy, sort_direction: 'desc', limit },
+          buildsSchema,
+          { timeoutMs: ANALYTICS_TIMEOUT_MS },
         )) ?? []
       );
     },

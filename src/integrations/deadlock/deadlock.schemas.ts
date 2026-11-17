@@ -268,3 +268,69 @@ export const relationStatsSchema = z.array(
   }),
 );
 export type RawRelationStats = z.infer<typeof relationStatsSchema>;
+
+/** `GET /v1/analytics/item-stats` : une ligne par item (agrégats sur les parties analysées). */
+export const itemStatsSchema = z.array(
+  z.object({
+    item_id: z.number().int().nonnegative(),
+    wins: z.number().int().nonnegative(),
+    losses: z.number().int().nonnegative(),
+    matches: z.number().int().nonnegative(),
+    players: z.number().int().nonnegative().nullish(),
+    sold: z.number().int().nonnegative().nullish(),
+    avg_buy_time_s: z.number().nullish(),
+    avg_sell_time_s: z.number().nullish(),
+  }),
+);
+export type RawItemStats = z.infer<typeof itemStatsSchema>;
+
+/** `GET /v1/analytics/item-permutation-stats` : combinaisons d'items achetés ensemble. */
+export const itemPermutationsSchema = z.array(
+  z.object({
+    item_ids: z.array(z.number().int().nonnegative()),
+    wins: z.number().int().nonnegative(),
+    losses: z.number().int().nonnegative(),
+    matches: z.number().int().nonnegative(),
+  }),
+);
+export type RawItemPermutations = z.infer<typeof itemPermutationsSchema>;
+
+/** `GET /v1/builds` : builds publiés en jeu (dernière version de chaque build). */
+export const buildsSchema = z.array(
+  z.object({
+    num_favorites: z.number().int().nullish(),
+    num_weekly_favorites: z.number().int().nullish(),
+    hero_build: z.object({
+      hero_id: z.number().int(),
+      hero_build_id: z.number().int(),
+      author_account_id: z.number().int().nullish(),
+      last_updated_timestamp: z.number().int().nullish(),
+      publish_timestamp: z.number().int().nullish(),
+      name: z.string().nullish(),
+      description: z.string().nullish(),
+      language: z.number().int().nullish(),
+      version: z.number().int().nullish(),
+      details: z
+        .object({
+          mod_categories: z
+            .array(
+              z.object({
+                name: z.string().nullish(),
+                description: z.string().nullish(),
+                mods: z
+                  .array(
+                    z.object({
+                      ability_id: z.number().int().nonnegative(),
+                      annotation: z.string().nullish(),
+                    }),
+                  )
+                  .nullish(),
+              }),
+            )
+            .nullish(),
+        })
+        .nullish(),
+    }),
+  }),
+);
+export type RawBuilds = z.infer<typeof buildsSchema>;
