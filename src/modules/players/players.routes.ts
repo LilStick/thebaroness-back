@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { steamIdSchema } from '../../shared/schemas';
 import { parse } from '../../shared/validation';
 import type { PlayersService } from './players.service';
+import { historyFilterSchema, overviewQuerySchema } from './profile-stats';
 
 const searchQuerySchema = z.object({
   q: z
@@ -12,7 +13,7 @@ const searchQuerySchema = z.object({
     .max(64, 'q : 64 caractères maximum'),
 });
 
-const matchesQuerySchema = z.object({
+const matchesQuerySchema = historyFilterSchema.extend({
   limit: z.coerce
     .number('limit : entier attendu')
     .int('limit : entier attendu')
@@ -41,13 +42,21 @@ export function createPlayersRouter(players: PlayersService): Router {
   });
 
   router.get('/:steamId/heroes', async (req, res) => {
-    res.json(await players.heroes(parse(steamIdSchema, req.params.steamId)));
+    const steamId = parse(steamIdSchema, req.params.steamId);
+    const filter = parse(historyFilterSchema.omit({ heroId: true, outcome: true }), req.query);
+    res.json(await players.heroes(steamId, { ...filter, outcome: 'all' }));
+  });
+
+  // Profil V2 : agrégats d'une période (défaut 30d), modes observés, top héros, couverture.
+  router.get('/:steamId/overview', async (req, res) => {
+    const steamId = parse(steamIdSchema, req.params.steamId);
+    res.json(await players.overview(steamId, parse(overviewQuerySchema, req.query)));
   });
 
   router.get('/:steamId/matches', async (req, res) => {
     const steamId = parse(steamIdSchema, req.params.steamId);
-    const { limit, cursor } = parse(matchesQuerySchema, req.query);
-    res.json(await players.matches(steamId, limit, cursor));
+    const { limit, cursor, ...filter } = parse(matchesQuerySchema, req.query);
+    res.json(await players.matches(steamId, limit, cursor, filter));
   });
 
   return router;

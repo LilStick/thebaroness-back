@@ -3,15 +3,162 @@
 Fichier de liaison entre le Claude du back (`thebaroness-back`) et celui du front (`thebaroness`).
 Le Claude du front le lit après un `pull` du back. Pendant côté front : `thebaroness/docs/HANDOFF.md`, lu par le back à chaque session.
 
-Dernière mise à jour : 16/11/2026 (voir `git log -- docs/HANDOFF.md` pour le SHA). HANDOFF front relu au commit `d90fce9`.
+Dernière mise à jour : 17/11/2026 (voir `git log -- docs/HANDOFF.md` pour le SHA). HANDOFF front relu sur `refonte-ui` au commit `5ec268f` (pack Profil joueur V2).
 
 ## A lire en premier
 
-- Production : front `https://thebaroness.4esport.fr` et back `https://api.thebaroness.4esport.fr` communiquent (correctif du `Dockerfile` front vérifié en ligne le 16/11).
-- **Nouvelles demandes : section « Demandes au front (v1.7.0) » juste en dessous.**
+- **Profil joueur V2, P0 livré en v1.9.0** : section suivante. Contrat : `docs/openapi.yaml` **v1.9.0** (aussi sur `/api/docs`), à recopier dans `src/contracts/openapi.yaml`. Tout est additif : aucun client v1.8 n'est cassé.
+- Production : front `https://thebaroness.4esport.fr` et back `https://api.thebaroness.4esport.fr`. La v1.9.0 n'y sera qu'après le prochain déploiement du back (LilStick).
+- Dépôt GitHub `LilStick/thebaroness-back` (l'ancienne URL `deadlock-tracker-back` redirige).
 
-- **Tout ce que le front attend est livré et testé.** Contrat de référence : `docs/openapi.yaml` **v1.8.0** (aussi sur `http://localhost:3001/api/docs`). A recopier dans `src/contracts/openapi.yaml`.
-- Dépôt GitHub `LilStick/thebaroness-back` (l'ancienne URL `deadlock-tracker-back` redirige ; le nom du dossier local n'a pas d'importance).
+## Profil joueur V2 : état de livraison (17/11/2026, réponse à `docs/design/player-profile-v2/02` et `05`)
+
+| Demande                                                                                                                      | Statut                                    | Où                                                                                  |
+| ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------- |
+| P0 `GET /players/{steamId}/overview`                                                                                         | **Livré (v1.9.0)**                        | Schéma `PlayerOverview`                                                             |
+| P0 filtres de `GET /players/{steamId}/matches`                                                                               | **Livré (v1.9.0)**                        | `period`, `gameMode`, `matchMode`, `heroId`, `outcome` ; `MatchPage.appliedFilters` |
+| P0 filtres et champs de `GET /players/{steamId}/heroes`                                                                      | **Livré (v1.9.0)**                        | `period`, `gameMode`, `matchMode` ; `PlayerHeroStat` étendu                         |
+| P1 `/activity`, `/rank-history`, `PlayerRank` enrichi, tendances 20 vs 20, coéquipiers/adversaires, détail de partie enrichi | **Non fait** (proposé, à valider)         | Voir « P1 : propositions » plus bas                                                 |
+| P2 catalogue Items/Builds                                                                                                    | **Non fait** (feuille de route seulement) | Voir « P2 : feuille de route »                                                      |
+
+Etat Git : livré sur `main` du back (issue #79, SHA dans `git log`). Vérifié sur données réelles en local (FunKa, 107 parties sur 30 jours). En production après le prochain déploiement du back.
+
+### Conventions communes aux trois routes
+
+- Publiques, sans JWT. Erreurs habituelles : 400 `INVALID_INPUT` (enum, `heroId`, curseur), 404 `NOT_FOUND` (joueur inconnu), 429, 502, 503.
+- `period` : `7d` et `30d` = fenêtre glissante **UTC** depuis l'instant de la requête (début inclus) ; `season` = depuis le début de la saison classée courante lu chez Deadlock API (`catalog.seasonStart()`, actuellement `2026-11-05T20:00:00Z`). Début de saison inconnu ou source en panne : **aucune borne appliquée**, `meta.isPartial: true` (et `coverage.notes: ["season_start_unknown"]` sur `/overview`).
+- `gameMode` (`all`, `normal`, `street_brawl`) et `matchMode` (`all`, `ranked`, `unranked`) sont **deux axes indépendants** : `gameMode=normal` contient classées et non classées. Les autres valeurs (`sandbox`, `private_lobby`, `coop_bot`…) ne sont pas filtrables (400) mais apparaissent sous `all`.
+- Partie au mode inconnu (`null`, copies anciennes) : retenue seulement sous `all` ; écartée d'un filtre précis.
+- Seules les parties gagnées ou perdues sont comptées (abandons et pénalités exclus, comme en v1.8).
+- Tout est calculé depuis l'historique en cache (`history:<accountId>`, 3 min) : changer de période ou de filtre ne relance **aucun** appel à Deadlock API (testé : 5 requêtes filtrées = 1 seul appel d'historique). Pas d'appel par partie.
+- Inconnu = `null`, jamais 0 ; chaque ratio est publié avec la taille de son échantillon.
+
+### `GET /api/players/{steamId}/overview?period=30d&gameMode=all&matchMode=all`
+
+Défauts : `period=30d`, `gameMode=all`, `matchMode=all`. Identité et rang actuel restent dans `GET /players/{steamId}`.
+
+Exemple réel (FunKa, `76561198009781660`, défauts, `topHeroes` tronqué à 1 entrée) :
+
+```json
+{
+  "filters": {
+    "period": "30d",
+    "gameMode": "all",
+    "matchMode": "all"
+  },
+  "summary": {
+    "matches": 107,
+    "wins": 60,
+    "losses": 47,
+    "winRate": 56.07,
+    "kills": 1013,
+    "deaths": 659,
+    "assists": 1478,
+    "kda": 3.78,
+    "kdaSampleSize": 107,
+    "avgNetWorthPerMinute": 1174.37,
+    "netWorthPerMinuteSampleSize": 107,
+    "avgDurationSeconds": 2294,
+    "durationSampleSize": 107,
+    "lastMatchAt": "2026-11-13T23:38:55.000Z"
+  },
+  "modes": [
+    {
+      "gameMode": "normal",
+      "matchMode": "unranked",
+      "matches": 95,
+      "wins": 54,
+      "losses": 41,
+      "winRate": 56.84
+    },
+    {
+      "gameMode": "normal",
+      "matchMode": "ranked",
+      "matches": 12,
+      "wins": 6,
+      "losses": 6,
+      "winRate": 50
+    }
+  ],
+  "topHeroes": [
+    {
+      "heroId": 81,
+      "heroName": "Celeste",
+      "heroImageUrl": "https://assets-bucket.deadlock-api.com/assets-api-res/images/heroes/unicorn_sm.webp",
+      "matches": 33,
+      "wins": 19,
+      "losses": 14,
+      "winRate": 57.58,
+      "kda": 3.79,
+      "kdaSampleSize": 33
+    }
+  ],
+  "coverage": {
+    "requestedFrom": "2026-10-18T12:06:18.000Z",
+    "requestedTo": "2026-11-17T12:06:18.000Z",
+    "observedFrom": "2026-10-18T17:15:00.000Z",
+    "observedTo": "2026-11-13T23:38:55.000Z",
+    "includedMatches": 107,
+    "excludedUnknownMode": 0,
+    "unknownModeMatches": 0,
+    "isPartial": false,
+    "notes": []
+  },
+  "meta": {
+    "fetchedAt": "2026-11-16T15:37:33.817Z",
+    "sourceUpdatedAt": null,
+    "isStale": false,
+    "isPartial": false
+  }
+}
+```
+
+- `summary.kills`, `deaths`, `assists`, `kda` : sur les seules parties où K, D **et** A sont connus (`kdaSampleSize`), `kda = (kills + assists) / max(deaths, 1)`, 2 décimales.
+- `avgNetWorthPerMinute` : **moyenne des ratios par partie** `netWorth / (durationSeconds / 60)` (net worth connu, durée > 0), pas total / total.
+- `avgDurationSeconds` : entier, parties de durée > 0.
+- `modes` : combinaisons observées à modes connus, par volume décroissant. `somme(modes.matches) + coverage.unknownModeMatches = summary.matches`.
+- `topHeroes` : 3 au plus, par volume puis `heroId`, avec nom et image du catalogue (repli `Héros #<id>`, `meta.isPartial`).
+- `coverage.notes` : `season_start_unknown`, `unknown_mode_excluded`, `unknown_mode_included`, `history_stale`.
+- Aucune partie : 200, compteurs à 0, ratios `null`, `modes: []`, `topHeroes: []`, `observedFrom/To: null`.
+
+### `GET /api/players/{steamId}/matches` (filtres ajoutés)
+
+- Nouveaux paramètres optionnels : `period`, `gameMode`, `matchMode`, `heroId` (entier > 0), `outcome` (`all`, `win`, `loss`). `limit` (1 à 50, défaut 20) et `cursor` inchangés.
+- **Sans filtre : comportement v1.8 exact** (tout l'historique, mêmes curseurs). Pas de période par défaut : le front envoie `period=30d` s'il le souhaite.
+- Avec filtres : sélection sur **tout** l'historique en cache, puis tri `playedAt` décroissant, `matchId` décroissant, puis pagination. 0 résultat : `items: []`, `nextCursor: null`.
+- Le curseur est **lié aux filtres** : réutiliser `nextCursor` avec d'autres filtres (ou un curseur filtré sans filtre) donne 400 `INVALID_INPUT` (« curseur obtenu avec d'autres filtres, recommencer sans curseur »). Changer de filtre = repartir sans curseur. Les curseurs v1.8 restent valables sans filtre.
+- Nouveau champ `appliedFilters` : `{ "period": "7d" | null, "gameMode": "all", "matchMode": "all", "heroId": null, "outcome": "all" }`.
+
+### `GET /api/players/{steamId}/heroes` (filtres et champs ajoutés)
+
+- Paramètres optionnels : `period`, `gameMode`, `matchMode` (sans filtre : tout l'historique, comme en v1.8).
+- `PlayerHeroStat` gagne `losses`, `kdaSampleSize`, `avgNetWorthPerMinute`, `netWorthPerMinuteSampleSize` ; la réponse gagne `appliedFilters`. Les champs v1.8 gardent leurs valeurs.
+- Note : `kda` y est désormais calculé sur le sous-ensemble complet (même règle que `/overview`). Identique à la v1.8 quand K, D et A sont connus, ce qui est toujours le cas avec la source actuelle.
+
+### Décisions et limites
+
+- Pas de cache des résultats calculés : l'agrégat d'un historique en cache prend quelques millisecondes ; cacher par combinaison de filtres n'apporterait rien.
+- `GET /players/{steamId}` (profil v1.8) garde son ancien calcul des totaux K/D/A (chaque total sur ses valeurs connues), pour ne pas changer silencieusement son sens. Les nouvelles routes utilisent le sous-ensemble complet.
+- `requestedTo` = instant de la requête : deux pages successives d'une période glissante sont calculées à quelques secondes d'écart (pas de doublon : le curseur est positionnel).
+- La couverture ne prétend pas connaître « toutes les parties jamais jouées » : c'est l'historique que Deadlock API renvoie (complet en pratique, plusieurs milliers de parties pour les gros comptes).
+
+### P1 : propositions (non faites, à valider)
+
+- `GET /players/{id}/activity?weeks=12` : jours UTC, V/D par jour depuis l'historique en cache (même source, aucun appel en plus). Faisable vite.
+- `GET /players/{id}/rank-history?period=` : points `{ at, badge, score }` sur les parties classées dont le badge est connu (`ranked_display_badge`, `score = tier*6 + subrank` comme pour les groupes), trous conservés, aucun MMR inventé.
+- `PlayerRank` enrichi (calibration, dernière partie classée) via `/v1/players/{id}/rank`, déjà utilisé par le classement.
+- Tendances 20 vs 20, coéquipiers/adversaires, détail de partie enrichi (items, dégâts) : à étudier sur la source avant tout contrat.
+
+### P2 : feuille de route Items/Builds (non commencé)
+
+Catalogue normalisé dans `api_cache` avec clé versionnée par version du jeu et langue (`english`), instantanés immuables par version et pointeur « dernière version », routes `/items`, `/items/{id}`, statistiques à TTL court par jeu de filtres, liens `itemId` des parties conservés avec leur version. Rien n'est implémenté.
+
+### Coordination demandée au front
+
+1. Recopier `docs/openapi.yaml` v1.9.0 dans `src/contracts/openapi.yaml` et remplacer les adaptateurs « mock de contrat proposé » par ces routes réelles.
+2. Remettre le curseur à zéro à chaque changement de filtre de `/matches`.
+3. Envoyer `period=30d` explicitement sur `/matches` et `/heroes` si l'écran l'attend (les défauts y restent « tout l'historique »).
+4. Signaler dans le HANDOFF du front tout écart observé (forme, valeur, performance).
 
 ## Demandes au front (v1.7.0 et v1.8.0, 16/11/2026)
 
@@ -153,6 +300,8 @@ npm run dev             # proxy Vite /api vers http://localhost:3001
 Les routes catalogue et joueurs interrogent la vraie API Deadlock : prévoir une connexion internet. En cas de limitation par la source, les réponses passent en `isStale` ou `isPartial`, ou en 503 avec `Retry-After`.
 
 ## Journal des changements de contrat (du plus récent au plus ancien)
+
+- 17/11/2026 : **v1.9.0** (profil V2, P0) : `GET /players/{steamId}/overview` ; filtres `period`, `gameMode`, `matchMode`, `heroId`, `outcome` sur `/matches` (curseur lié aux filtres, `appliedFilters`) ; filtres et champs `losses`, `kdaSampleSize`, `avgNetWorthPerMinute`, `netWorthPerMinuteSampleSize` sur `/heroes`. Additif.
 
 - 16/11/2026 : classement, repli sur l'historique quand la dernière partie classée n'a pas de rang (95/100). Forme inchangée (v1.8.0).
 

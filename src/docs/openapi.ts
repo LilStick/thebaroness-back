@@ -5,7 +5,7 @@ import type { OpenAPIV3_1 as O } from 'openapi-types';
  * Servi sur /api/openapi.json et /api/docs ; exporté dans docs/openapi.yaml (`npm run openapi`).
  * Versionnement : majeure = changement incompatible, mineure = ajout, patch = correction.
  */
-export const OPENAPI_VERSION = '1.8.0';
+export const OPENAPI_VERSION = '1.9.0';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const response = (name: string) => ({ $ref: `#/components/responses/${name}` });
@@ -53,6 +53,37 @@ const gameModeSchema: O.SchemaObject = {
   enum: ['normal', '1v1_test', 'sandbox', 'street_brawl', 'explore_nyc', null],
   description: 'Mode de jeu : `normal` (6 contre 6), `street_brawl`, `sandbox`… null si inconnu.',
 };
+
+/** Filtres du profil V2 (paramètres de requête). */
+const periodParam = (withDefault: boolean): O.ParameterObject => ({
+  name: 'period',
+  in: 'query',
+  description:
+    '`7d` et `30d` : fenêtre glissante UTC depuis l’instant de la requête. `season` : depuis le début de la saison classée courante (source Deadlock API) ; si inconnu, aucune borne et `meta.isPartial`.' +
+    (withDefault ? '' : ' Absent : tout l’historique (comportement v1.8).'),
+  schema: withDefault
+    ? { type: 'string', enum: ['7d', '30d', 'season'], default: '30d' }
+    : { type: 'string', enum: ['7d', '30d', 'season'] },
+});
+const gameModeParam: O.ParameterObject = {
+  name: 'gameMode',
+  in: 'query',
+  description:
+    'Mode de jeu (axe indépendant de `matchMode`) : `normal` inclut classées et non classées. Une partie au mode inconnu n’est retenue que sous `all`.',
+  schema: { type: 'string', enum: ['all', 'normal', 'street_brawl'], default: 'all' },
+};
+const matchModeParam: O.ParameterObject = {
+  name: 'matchMode',
+  in: 'query',
+  description: 'Type de partie. Une partie au type inconnu n’est retenue que sous `all`.',
+  schema: { type: 'string', enum: ['all', 'ranked', 'unranked'], default: 'all' },
+};
+
+const sampleSize = (what: string): O.SchemaObject => ({
+  type: 'integer',
+  minimum: 0,
+  description: `Nombre de parties utilisées pour ${what}.`,
+});
 
 const steamIdParam: O.ParameterObject = {
   name: 'steamId',
@@ -281,10 +312,26 @@ export const openApiDocument: O.Document = {
           {
             name: 'cursor',
             in: 'query',
-            description: 'Jeton opaque `nextCursor` de la page précédente, à transmettre tel quel.',
+            description:
+              'Jeton opaque `nextCursor` de la page précédente, à transmettre tel quel avec les MÊMES filtres. Un curseur obtenu avec d’autres filtres (ou sans filtre) donne 400 : recommencer sans curseur.',
             schema: { type: 'string', maxLength: 128 },
           },
+          periodParam(false),
+          gameModeParam,
+          matchModeParam,
+          {
+            name: 'heroId',
+            in: 'query',
+            schema: { type: 'integer', minimum: 1 },
+          },
+          {
+            name: 'outcome',
+            in: 'query',
+            schema: { type: 'string', enum: ['all', 'win', 'loss'], default: 'all' },
+          },
         ],
+        description:
+          'Sans filtre : comportement v1.8 (tout l’historique). Avec filtres : sélection sur TOUT l’historique en cache, puis tri (`playedAt` décroissant, puis `matchId` décroissant) et pagination. 0 résultat : `items: []`.',
         responses: {
           '200': { description: 'Page de parties', content: json(ref('MatchPage')) },
           '400': response('BadRequest'),
@@ -483,20 +530,39 @@ export const openApiDocument: O.Document = {
         },
       },
     },
+    '/players/{steamId}/overview': {
+      get: {
+        tags: ['Joueurs'],
+        summary: 'Profil V2 : synthèse d’une période',
+        description:
+          'Agrégats d’une période exacte, combinaisons de modes observées, top 3 héros et couverture, calculés sur l’historique en cache (aucun appel par partie). Identité et rang actuel restent dans `GET /players/{steamId}`. Seules les parties gagnées ou perdues sont comptées.',
+        parameters: [steamIdParam, periodParam(true), gameModeParam, matchModeParam],
+        responses: {
+          '200': { description: 'Synthèse', content: json(ref('PlayerOverview')) },
+          '400': response('BadRequest'),
+          '404': response('NotFound'),
+          '429': response('RateLimited'),
+          '502': response('UpstreamError'),
+          '503': response('ServiceUnavailable'),
+        },
+      },
+    },
     '/players/{steamId}/heroes': {
       get: {
         tags: ['Joueurs'],
         summary: "Statistiques d'un joueur par héros",
-        description: 'Sur les parties disponibles (même source que le profil), tri par parties.',
-        parameters: [steamIdParam],
+        description:
+          'Sur les parties disponibles (même source que le profil), tri par parties décroissant puis `heroId`. Filtres optionnels ; sans filtre, tout l’historique (v1.8).',
+        parameters: [steamIdParam, periodParam(false), gameModeParam, matchModeParam],
         responses: {
           '200': {
             description: 'Héros joués',
             content: json({
               type: 'object',
-              required: ['items', 'meta'],
+              required: ['items', 'appliedFilters', 'meta'],
               properties: {
                 items: { type: 'array', items: ref('PlayerHeroStat') },
+                appliedFilters: ref('AppliedFilters'),
                 meta: ref('DataMeta'),
               },
             }),
@@ -1264,15 +1330,206 @@ export const openApiDocument: O.Document = {
       },
       PlayerHeroStat: {
         type: 'object',
-        required: ['heroId', 'heroName', 'heroImageUrl', 'matches', 'wins', 'winRate', 'kda'],
+        required: [
+          'heroId',
+          'heroName',
+          'heroImageUrl',
+          'matches',
+          'wins',
+          'losses',
+          'winRate',
+          'kda',
+          'kdaSampleSize',
+          'avgNetWorthPerMinute',
+          'netWorthPerMinuteSampleSize',
+        ],
         properties: {
           heroId: { type: 'integer' },
           heroName: { type: 'string' },
           heroImageUrl: nullable('string'),
           matches: { type: 'integer' },
           wins: { type: 'integer' },
+          losses: { type: 'integer' },
           winRate: nullable('number'),
-          kda: nullable('number'),
+          kda: nullable('number', {
+            description: '`(ΣK + ΣA) / max(ΣD, 1)` sur les parties où K, D et A sont connus.',
+          }),
+          kdaSampleSize: sampleSize('le KDA'),
+          avgNetWorthPerMinute: nullable('number', {
+            description:
+              'Moyenne des ratios par partie `netWorth / (durationSeconds / 60)` (net worth connu, durée > 0).',
+          }),
+          netWorthPerMinuteSampleSize: sampleSize('le net worth par minute'),
+        },
+      },
+      AppliedFilters: {
+        type: 'object',
+        required: ['period', 'gameMode', 'matchMode', 'heroId', 'outcome'],
+        description: 'Filtres effectivement appliqués (`null` : non filtré).',
+        properties: {
+          period: { type: ['string', 'null'], enum: ['7d', '30d', 'season', null] },
+          gameMode: { type: 'string', enum: ['all', 'normal', 'street_brawl'] },
+          matchMode: { type: 'string', enum: ['all', 'ranked', 'unranked'] },
+          heroId: nullable('integer'),
+          outcome: { type: 'string', enum: ['all', 'win', 'loss'] },
+        },
+      },
+      PlayerOverview: {
+        type: 'object',
+        required: ['filters', 'summary', 'modes', 'topHeroes', 'coverage', 'meta'],
+        properties: {
+          filters: {
+            type: 'object',
+            required: ['period', 'gameMode', 'matchMode'],
+            properties: {
+              period: { type: 'string', enum: ['7d', '30d', 'season'] },
+              gameMode: { type: 'string', enum: ['all', 'normal', 'street_brawl'] },
+              matchMode: { type: 'string', enum: ['all', 'ranked', 'unranked'] },
+            },
+          },
+          summary: {
+            type: 'object',
+            required: [
+              'matches',
+              'wins',
+              'losses',
+              'winRate',
+              'kills',
+              'deaths',
+              'assists',
+              'kda',
+              'kdaSampleSize',
+              'avgNetWorthPerMinute',
+              'netWorthPerMinuteSampleSize',
+              'avgDurationSeconds',
+              'durationSampleSize',
+              'lastMatchAt',
+            ],
+            properties: {
+              matches: { type: 'integer' },
+              wins: { type: 'integer' },
+              losses: { type: 'integer' },
+              winRate: nullable('number', { description: 'null si aucune partie' }),
+              kills: nullable('integer', {
+                description: 'Total sur les parties complètes (K, D, A connus)',
+              }),
+              deaths: nullable('integer'),
+              assists: nullable('integer'),
+              kda: nullable('number', {
+                description:
+                  '`(kills + assists) / max(deaths, 1)` sur ce même sous-ensemble, 2 décimales.',
+              }),
+              kdaSampleSize: sampleSize('kills, deaths, assists et kda'),
+              avgNetWorthPerMinute: nullable('number', {
+                description:
+                  'Moyenne des ratios par partie `netWorth / (durationSeconds / 60)`, et non total / total.',
+              }),
+              netWorthPerMinuteSampleSize: sampleSize('le net worth par minute'),
+              avgDurationSeconds: nullable('integer'),
+              durationSampleSize: sampleSize('la durée moyenne'),
+              lastMatchAt: nullable('string', { format: 'date-time' }),
+            },
+          },
+          modes: {
+            type: 'array',
+            description:
+              'Combinaisons observées (modes connus), par volume décroissant. Somme des `matches` + `coverage.unknownModeMatches` = `summary.matches`.',
+            items: {
+              type: 'object',
+              required: ['gameMode', 'matchMode', 'matches', 'wins', 'losses', 'winRate'],
+              properties: {
+                gameMode: { type: 'string' },
+                matchMode: { type: 'string' },
+                matches: { type: 'integer' },
+                wins: { type: 'integer' },
+                losses: { type: 'integer' },
+                winRate: { type: 'number' },
+              },
+            },
+          },
+          topHeroes: {
+            type: 'array',
+            maxItems: 3,
+            items: {
+              type: 'object',
+              required: [
+                'heroId',
+                'heroName',
+                'heroImageUrl',
+                'matches',
+                'wins',
+                'losses',
+                'winRate',
+                'kda',
+                'kdaSampleSize',
+              ],
+              properties: {
+                heroId: { type: 'integer' },
+                heroName: { type: 'string' },
+                heroImageUrl: nullable('string'),
+                matches: { type: 'integer' },
+                wins: { type: 'integer' },
+                losses: { type: 'integer' },
+                winRate: nullable('number'),
+                kda: nullable('number'),
+                kdaSampleSize: sampleSize('le KDA'),
+              },
+            },
+          },
+          coverage: {
+            type: 'object',
+            required: [
+              'requestedFrom',
+              'requestedTo',
+              'observedFrom',
+              'observedTo',
+              'includedMatches',
+              'excludedUnknownMode',
+              'unknownModeMatches',
+              'isPartial',
+              'notes',
+            ],
+            properties: {
+              requestedFrom: nullable('string', {
+                format: 'date-time',
+                description: 'null si `season` et début de saison inconnu',
+              }),
+              requestedTo: { type: 'string', format: 'date-time' },
+              observedFrom: nullable('string', {
+                format: 'date-time',
+                description: 'Première partie retenue (null si aucune)',
+              }),
+              observedTo: nullable('string', { format: 'date-time' }),
+              includedMatches: { type: 'integer' },
+              excludedUnknownMode: {
+                type: 'integer',
+                description:
+                  'Parties écartées car leur mode est inconnu alors qu’un mode précis est demandé',
+              },
+              unknownModeMatches: {
+                type: 'integer',
+                description: 'Parties retenues (filtre `all`) au mode inconnu, absentes de `modes`',
+              },
+              isPartial: {
+                type: 'boolean',
+                description:
+                  'true si la période n’a pas pu être appliquée (début de saison inconnu)',
+              },
+              notes: {
+                type: 'array',
+                items: {
+                  type: 'string',
+                  enum: [
+                    'season_start_unknown',
+                    'unknown_mode_excluded',
+                    'unknown_mode_included',
+                    'history_stale',
+                  ],
+                },
+              },
+            },
+          },
+          meta: ref('DataMeta'),
         },
       },
       MatchSummary: {
@@ -1313,10 +1570,11 @@ export const openApiDocument: O.Document = {
       },
       MatchPage: {
         type: 'object',
-        required: ['items', 'nextCursor', 'meta'],
+        required: ['items', 'nextCursor', 'appliedFilters', 'meta'],
         properties: {
           items: { type: 'array', items: ref('MatchSummary') },
           nextCursor: nullable('string'),
+          appliedFilters: ref('AppliedFilters'),
           meta: ref('DataMeta'),
         },
       },
