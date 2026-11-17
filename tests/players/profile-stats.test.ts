@@ -1,3 +1,4 @@
+import { matchWin } from '../../src/modules/players/players.service';
 import {
   aggregate,
   filterFingerprint,
@@ -262,5 +263,30 @@ describe('filtres de requête', () => {
     [{ heroId: 'abc' }],
   ])('%p → invalide', (query) => {
     expect(historyFilterSchema.safeParse(query).success).toBe(false);
+  });
+});
+
+describe('matchWin (résultat par partie)', () => {
+  const entry = (extra: object) =>
+    ({ match_id: 1, hero_id: 1, start_time: 1, player_match_outcome: 0, ...extra }) as Parameters<
+      typeof matchWin
+    >[0];
+
+  it.each([
+    ['victoire enregistrée', { player_match_outcome: 1 }, true],
+    ['défaite enregistrée', { player_match_outcome: 2 }, false],
+    ['ancienne partie gagnée (équipe = vainqueur)', { match_result: 1, player_team: 1 }, true],
+    ['ancienne partie perdue', { match_result: 0, player_team: 1 }, false],
+    [
+      'ancienne partie abandonnée',
+      { match_result: 1, player_team: 1, abandoned_time_s: 300 },
+      null,
+    ],
+    ['ancienne partie sans vainqueur connu', { match_result: 2, player_team: 1 }, null],
+    ['ancienne partie sans équipe connue', { match_result: 1, player_team: null }, null],
+    ['abandon (3)', { player_match_outcome: 3, match_result: 1, player_team: 1 }, null],
+    ['pénalité (5)', { player_match_outcome: 5 }, null],
+  ])('%s', (_label, extra, expected) => {
+    expect(matchWin(entry(extra))).toBe(expected);
   });
 });

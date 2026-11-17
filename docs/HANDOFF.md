@@ -3,13 +3,312 @@
 Fichier de liaison entre le Claude du back (`thebaroness-back`) et celui du front (`thebaroness`).
 Le Claude du front le lit après un `pull` du back. Pendant côté front : `thebaroness/docs/HANDOFF.md`, lu par le back à chaque session.
 
-Dernière mise à jour : 17/11/2026 (voir `git log -- docs/HANDOFF.md` pour le SHA). HANDOFF front relu sur `refonte-ui` au commit `5ec268f` (pack Profil joueur V2).
+Dernière mise à jour : 17/11/2026 (voir `git log -- docs/HANDOFF.md` pour le SHA). HANDOFF front relu sur `refonte-ui` au commit `5ec268f` (pack Profil joueur V2). Phase P1 livrée en v1.10.0.
 
 ## A lire en premier
 
+- **Phase P1 livrée en v1.10.0** (section suivante) : détail de partie enrichi, historique de rang, activité, coéquipiers et adversaires, catalogue des items. **Correction de données à lire : l'historique complet inclut désormais les parties anciennes** (voir « Changement de comportement »).
 - **Profil joueur V2, P0 livré en v1.9.0** : section suivante. Contrat : `docs/openapi.yaml` **v1.9.0** (aussi sur `/api/docs`), à recopier dans `src/contracts/openapi.yaml`. Tout est additif : aucun client v1.8 n'est cassé.
 - Production : front `https://thebaroness.4esport.fr` et back `https://api.thebaroness.4esport.fr`. La v1.9.0 n'y sera qu'après le prochain déploiement du back (LilStick).
 - Dépôt GitHub `LilStick/thebaroness-back` (l'ancienne URL `deadlock-tracker-back` redirige).
+
+## Phase P1 : état de livraison (v1.10.0, 17/11/2026)
+
+| Demande                                                            | Statut                           | Route ou champ                                                          |
+| ------------------------------------------------------------------ | -------------------------------- | ----------------------------------------------------------------------- |
+| Détail de partie enrichi (statistiques, items, MVP, participation) | **Livré**                        | `GET /matches/{matchId}` : `MatchPlayer` étendu, `teams[].averageBadge` |
+| Historique de rang                                                 | **Livré**                        | `GET /players/{steamId}/rank-history?period=`                           |
+| Activité (heatmap)                                                 | **Livré**                        | `GET /players/{steamId}/activity?weeks=&gameMode=&matchMode=`           |
+| Coéquipiers et adversaires                                         | **Livré**                        | `GET /players/{steamId}/relationships`                                  |
+| Catalogue des items (base)                                         | **Livré**                        | `GET /items`, `GET /items/{itemId}`                                     |
+| Statistiques d'items, builds, associations, tendances 20 vs 20     | **Non fait** (spécifié plus bas) | —                                                                       |
+
+Etat Git : livré sur `main` du back (issue #81, SHA dans `git log`). Vérifié sur données réelles (FunKa, partie `136927164`). Production : après le prochain déploiement du back.
+
+### Changement de comportement : parties anciennes incluses
+
+Deadlock API renvoie `player_match_outcome = 0` (« non enregistré ») pour les parties anciennes (avant mi-2026 environ), et 1/2 ensuite. Le back n'acceptait que 1 et 2 : **il ignorait 70 à 80 % de l'historique complet** des comptes anciens (FunKa : 384 parties sur 539 ; soÿer : 3234 sur 4076). Désormais, pour `outcome = 0` sans abandon, le résultat est déduit de `match_result === player_team`, exactement la règle de la source (vérifié : 137 agrégats coéquipiers/adversaires sur 137 concordent). Les codes 3, 4, 5 (abandon, pénalité, non scoré) restent exclus.
+
+- Effet : `GET /players/{steamId}` (stats de carrière), `/heroes` et `/matches` **sans période** comptent plus de parties (FunKa : 150 → 531). Les périodes `7d`, `30d` et `season` ne changent pas (parties récentes déjà en 1/2).
+- Cache : clé `history:v2:<accountId>` (les copies v1 sont ignorées).
+
+### `GET /api/matches/{matchId}` (enrichi, additif)
+
+Chargement différé conservé : la route lit les métadonnées d'UNE partie (≈ 1,3 Mo chez la source), les normalise et ne garde en cache (`match:v3:<id>`, 7 jours) que la forme compacte. Aucun appel par partie depuis l'historique.
+
+- Par équipe : `averageBadge` (badge moyen fourni par la source, `null` si inconnu, fréquent en non classé) et `averageRankName` (ex. « Phantom 4 »).
+- Par joueur (nouveaux champs, tous nullables) :
+  - `mvpRank` : classement MVP **calculé par Valve** (1 = meilleur), `null` s'il est absent ;
+  - `killParticipation` : `(kills + assists) / éliminations de l'équipe × 100`, `null` si une valeur de l'équipe manque ;
+  - `stats` (`MatchPlayerStats`, dernier relevé = fin de partie) : `playerDamage` (dégâts aux héros), `damageTaken`, `objectiveDamage`, `creepDamage`, `neutralDamage`, `healing`, `selfHealing`, `teammateHealing`, `damageMitigated`, `heroBulletsHit`, `heroBulletsHitCrit`, `heroCritRate` (critiques / balles sur héros × 100), `shotsHit`, `shotsMissed`, `accuracy` (toutes cibles), `headshotKills`, `creepKills`, `neutralKills` ; `stats: null` sans relevé ;
+  - `purchases` : achats d'objets (type `upgrade` du catalogue), par seconde d'achat, avec `soldAtSeconds` (`null` si gardé) ; `finalItemIds` : objets jamais revendus ; `abilityUpgrades` : montées de capacités. Les trois valent `null` si le catalogue d'items ou les évènements sont indisponibles (`meta.isPartial`).
+- Les `itemId` se résolvent avec `GET /items` (nom, image, prix, slot) : charger le catalogue une fois, pas un appel par item.
+
+Exemple réel (FunKa, Celeste, listes tronquées) :
+
+```json
+{
+  "steamId": "76561198009781660",
+  "displayName": "FunKa",
+  "heroId": 81,
+  "heroName": "Celeste",
+  "heroImageUrl": "https://assets-bucket.deadlock-api.com/assets-api-res/images/heroes/unicorn_sm.webp",
+  "level": 34,
+  "kills": 10,
+  "deaths": 3,
+  "assists": 6,
+  "netWorth": 44665,
+  "lastHits": 242,
+  "denies": 9,
+  "mvpRank": 1,
+  "killParticipation": 64,
+  "stats": {
+    "playerDamage": 51825,
+    "damageTaken": 21162,
+    "objectiveDamage": 10607,
+    "creepDamage": 52957,
+    "neutralDamage": 22339,
+    "healing": 11166,
+    "selfHealing": 11166,
+    "teammateHealing": 0,
+    "damageMitigated": 26219,
+    "heroBulletsHit": 143,
+    "heroBulletsHitCrit": 49,
+    "heroCritRate": 34.27,
+    "shotsHit": 577,
+    "shotsMissed": 469,
+    "accuracy": 55.16,
+    "headshotKills": 1,
+    "creepKills": 131,
+    "neutralKills": 37
+  },
+  "purchases": [
+    {
+      "itemId": 2829638276,
+      "atSeconds": 72,
+      "soldAtSeconds": 1455
+    },
+    {
+      "itemId": 3077079169,
+      "atSeconds": 207,
+      "soldAtSeconds": 1022
+    },
+    {
+      "itemId": 1672893796,
+      "atSeconds": 266,
+      "soldAtSeconds": 1088
+    }
+  ],
+  "finalItemIds": [2603935618, 1925087134, 876563814, 395944548],
+  "abilityUpgrades": [
+    {
+      "abilityId": 3443575800,
+      "atSeconds": 10
+    },
+    {
+      "abilityId": 3443575800,
+      "atSeconds": 45
+    }
+  ]
+}
+```
+
+### `GET /api/players/{steamId}/rank-history?period=season`
+
+- Un point par partie classée **dont la source fournit le badge** ; aucune interpolation, aucun MMR. `score = tier × 6 + subrank` (même échelle que les groupes) ; `badge = tier × 10 + subrank` (Valve).
+- `coverage.missingBadge` : parties classées sans badge (fréquent : FunKa 7 sur 11 cette saison ; soÿer 0 sur 156 sur 30 jours). Note `badge_missing_on_some_ranked_matches`.
+- Défaut `season` ; `7d` et `30d` disponibles.
+
+```json
+{
+  "period": "season",
+  "points": [
+    {
+      "at": "2026-11-13T14:30:41.000Z",
+      "matchId": "136659782",
+      "badge": 46,
+      "tier": 4,
+      "subrank": 6,
+      "score": 30,
+      "name": "Sentinel 6",
+      "imageUrl": "https://api.deadlock-api.com/v1/assets/ranks/4/6/image?format=webp",
+      "outcome": "win"
+    }
+  ],
+  "coverage": {
+    "requestedFrom": "2026-11-05T20:00:00.000Z",
+    "requestedTo": "2026-11-17T13:15:31.000Z",
+    "rankedMatches": 11,
+    "pointCount": 4,
+    "missingBadge": 7,
+    "isPartial": false,
+    "notes": ["badge_missing_on_some_ranked_matches"]
+  },
+  "meta": {
+    "fetchedAt": "2026-11-17T13:10:28.426Z",
+    "sourceUpdatedAt": null,
+    "isStale": false,
+    "isPartial": false
+  }
+}
+```
+
+### `GET /api/players/{steamId}/activity?weeks=12`
+
+- `weeks` 1 à 52 (défaut 12), `gameMode`, `matchMode` comme `/overview`. Un objet par jour UTC, du plus ancien à aujourd'hui inclus ; jour sans partie = 0 (historique source complet).
+
+```json
+{
+  "weeks": 1,
+  "filters": {
+    "gameMode": "all",
+    "matchMode": "all"
+  },
+  "days": [
+    {
+      "date": "2026-11-11",
+      "matches": 9,
+      "wins": 6,
+      "losses": 3
+    },
+    {
+      "date": "2026-11-12",
+      "matches": 0,
+      "wins": 0,
+      "losses": 0
+    }
+  ],
+  "summary": {
+    "matches": 13,
+    "wins": 10,
+    "losses": 3,
+    "activeDays": 2
+  },
+  "coverage": {
+    "from": "2026-11-11",
+    "to": "2026-11-17",
+    "timezone": "UTC",
+    "excludedUnknownMode": 0,
+    "notes": []
+  },
+  "meta": {
+    "fetchedAt": "2026-11-17T13:15:25.254Z",
+    "sourceUpdatedAt": null,
+    "isStale": false,
+    "isPartial": false
+  }
+}
+```
+
+### `GET /api/players/{steamId}/relationships`
+
+- Paramètres : `period` (absent = tout l'historique), `gameMode` `normal` (défaut) ou `street_brawl` (la source ne fait pas « tous modes »), `sameParty` (`true` : coéquipiers dans le même groupe, information de la source), `minMatches` (1 à 50, défaut 2), `limit` (1 à 50, défaut 10).
+- `wins` = victoires **du joueur demandé** dans les parties communes. À présenter comme « joués avec / contre », jamais comme amis Steam.
+- Une source en panne : sa liste vaut `null` et `meta.isPartial` ; les deux : 503. Cache 10 min (1 min si incomplet), borne basse arrondie à 10 min.
+
+```json
+{
+  "appliedFilters": {
+    "period": "season",
+    "gameMode": "normal",
+    "sameParty": false,
+    "minMatches": 2,
+    "limit": 2
+  },
+  "teammates": [
+    {
+      "steamId": "76561198249791904",
+      "displayName": "LilStick",
+      "avatarUrl": "https://avatars.steamstatic.com/cae1b5cb57c6cb1c45a031aa834b1043ed939c7a_full.jpg",
+      "matches": 7,
+      "wins": 2,
+      "losses": 5,
+      "winRate": 28.57
+    },
+    {
+      "steamId": "76561199025088808",
+      "displayName": "mai",
+      "avatarUrl": "https://avatars.steamstatic.com/70c28851d6543f80bf9cd2ffc10396c49944cf63_full.jpg",
+      "matches": 7,
+      "wins": 2,
+      "losses": 5,
+      "winRate": 28.57
+    }
+  ],
+  "opponents": [
+    {
+      "steamId": "76561198966168129",
+      "displayName": "Herald",
+      "avatarUrl": "https://avatars.steamstatic.com/27ac971ff132f96cefe965fbef89e79a4e35990d_full.jpg",
+      "matches": 2,
+      "wins": 0,
+      "losses": 2,
+      "winRate": 0
+    }
+  ],
+  "coverage": {
+    "requestedFrom": "2026-11-05T20:00:00.000Z",
+    "notes": []
+  },
+  "meta": {
+    "fetchedAt": "2026-11-17T13:10:40.895Z",
+    "sourceUpdatedAt": null,
+    "isStale": false,
+    "isPartial": false
+  }
+}
+```
+
+### `GET /api/items` et `GET /api/items/{itemId}`
+
+- Filtres de liste : `type` (`upgrade`, `ability`, `weapon`), `slot` (`weapon`, `vitality`, `spirit`), `tier` (1 à 5), `shopable` (`true`, `false`), `clientVersion`.
+- `clientVersion` absent : version la plus récente du client (relue chaque heure). Un patch = une nouvelle version = un nouvel instantané ; les anciens restent disponibles (`?clientVersion=`) pour les items des vieilles parties.
+- 782 items (250 objets, 437 capacités, 95 armes) ; `imageUrl` = icône de boutique pour les objets.
+
+```json
+{
+  "clientVersion": 6861,
+  "item": {
+    "id": 1548066885,
+    "className": "upgrade_clip_size",
+    "name": "Extended Magazine",
+    "type": "upgrade",
+    "slot": "weapon",
+    "tier": 1,
+    "cost": 800,
+    "isActive": false,
+    "shopable": true,
+    "disabled": false,
+    "heroIds": [],
+    "componentIds": [],
+    "imageUrl": "https://assets-bucket.deadlock-api.com/assets-api-res/images/items/weapon/basic_magazine.webp"
+  },
+  "meta": {
+    "fetchedAt": "2026-11-17T13:10:28.130Z",
+    "sourceUpdatedAt": null,
+    "isStale": false,
+    "isPartial": false
+  }
+}
+```
+
+### Architecture du cache (un seul système : `api_cache`)
+
+| Clé                                                      | Contenu                                             | TTL                                          |
+| -------------------------------------------------------- | --------------------------------------------------- | -------------------------------------------- |
+| `history:v2:<accountId>`                                 | historique normalisé                                | 3 min (copie périmée servie en cas de panne) |
+| `match:v3:<matchId>`                                     | partie normalisée (sans les relevés intermédiaires) | 7 jours                                      |
+| `catalog:client-version`                                 | version courante du client                          | 1 h                                          |
+| `catalog:items:v<version>:en`                            | instantané immuable des items                       | 30 jours                                     |
+| `catalog:items:latest:en`                                | repli si la version est inconnue                    | 24 h                                         |
+| `relations:v1:<accountId>:<borne>:<mode>:<groupe>:<min>` | coéquipiers, adversaires, pseudos                   | 10 min (1 min si incomplet)                  |
+
+`/rank-history` et `/activity` n'ont pas de cache propre : calcul de quelques millisecondes sur `history:v2`.
+
+### P2 : spécification Items et Builds (non commencé)
+
+Sources vérifiées chez Deadlock API : `/v1/analytics/item-stats` (taux de victoire et d'achat par item, filtrables par héros, mode, badge, période), `/v1/analytics/item-permutation-stats` (associations), `/v1/analytics/item-flow-stats` (ordre d'achat), `/v1/analytics/build-item-stats`, `/v1/analytics/hero-build-stats`, `/v1/builds` (builds publiés, recherche) et `/v1/assets/build-tags`, `/v1/patches` (notes de patch).
+Plan : `GET /items/{itemId}/stats?period=&heroId=&rankTier=` (cache 30 min par jeu de filtres, dénominateurs publiés), `GET /heroes/{heroId}/builds` (builds publiés, cache 1 h), `GET /items/{itemId}/combos` ; mêmes conventions (`null` = inconnu, `meta`, `isPartial`).
 
 ## Profil joueur V2 : état de livraison (17/11/2026, réponse à `docs/design/player-profile-v2/02` et `05`)
 
@@ -300,6 +599,8 @@ npm run dev             # proxy Vite /api vers http://localhost:3001
 Les routes catalogue et joueurs interrogent la vraie API Deadlock : prévoir une connexion internet. En cas de limitation par la source, les réponses passent en `isStale` ou `isPartial`, ou en 503 avec `Retry-After`.
 
 ## Journal des changements de contrat (du plus récent au plus ancien)
+
+- 17/11/2026 : **v1.10.0** (P1) : `/players/{steamId}/rank-history`, `/activity`, `/relationships`, `/items`, `/items/{itemId}` ; `MatchPlayer` (`mvpRank`, `killParticipation`, `stats`, `purchases`, `finalItemIds`, `abilityUpgrades`) et `teams[].averageBadge`, `averageRankName`. Correction : parties anciennes (`outcome` 0) incluses dans l'historique. Additif pour les formes.
 
 - 17/11/2026 : **v1.9.0** (profil V2, P0) : `GET /players/{steamId}/overview` ; filtres `period`, `gameMode`, `matchMode`, `heroId`, `outcome` sur `/matches` (curseur lié aux filtres, `appliedFilters`) ; filtres et champs `losses`, `kdaSampleSize`, `avgNetWorthPerMinute`, `netWorthPerMinuteSampleSize` sur `/heroes`. Additif.
 

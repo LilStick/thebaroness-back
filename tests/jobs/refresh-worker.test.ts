@@ -228,7 +228,7 @@ describe('Worker de préchauffage du cache', () => {
 
     await expect(worker.runOnce()).resolves.toMatchObject({ refreshed: 1, aborted: false });
     const keys = (await ApiCacheModel.find({}, { key: 1 }).lean()).map((e) => e.key).sort();
-    expect(keys).toEqual([`history:${accountId}`, `profile:${accountId}`]);
+    expect(keys).toEqual([`history:v2:${accountId}`, `profile:${accountId}`]);
 
     const calls = upstream.calls.length;
     await worker.runOnce();

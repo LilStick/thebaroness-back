@@ -5,6 +5,8 @@ import { notFound } from '../../shared/errors';
 import { accountIdToSteamId } from '../../shared/schemas';
 import { toGameMode, toMatchMode } from '../../integrations/deadlock/game-modes';
 import { dataMeta, type CatalogService } from '../catalog/catalog.service';
+import type { ItemsService } from '../items/items.service';
+import { normalizeMatch, splitItems } from './match-detail';
 import { rankFromBadge } from '../catalog/ranks';
 
 export const LEADERBOARD_REGIONS = ['Europe', 'Asia', 'NAmerica', 'SAmerica', 'Oceania'] as const;
@@ -173,7 +175,11 @@ async function fillFromHistory(
   return results.every((r) => r.status === 'fulfilled');
 }
 
-export function createMetaService(deadlock: DeadlockApi, catalog: CatalogService) {
+export function createMetaService(
+  deadlock: DeadlockApi,
+  catalog: CatalogService,
+  items: Pick<ItemsService, 'index'>,
+) {
   /** Index des héros facultatif : sans lui, noms de repli et réponse partielle. */
   const heroIndex = () => catalog.heroIndex().catch(() => null);
 
@@ -257,8 +263,8 @@ export function createMetaService(deadlock: DeadlockApi, catalog: CatalogService
     },
 
     async match(matchId: string) {
-      // Clé v2 : les copies antérieures n'ont pas les modes de jeu.
-      const detail = await cached(`match:v2:${matchId}`, { ttlMs: TTL.match }, async () => {
+      // Clé v3 : partie normalisée (achats, statistiques de fin de partie), sans le brut (≈ 1,3 Mo).
+      const detail = await cached(`match:v3:${matchId}`, { ttlMs: TTL.match }, async () => {
         const info = await deadlock.getMatchMetadata(matchId);
         if (!info) return null;
         const accountIds = info.players
@@ -267,51 +273,77 @@ export function createMetaService(deadlock: DeadlockApi, catalog: CatalogService
         // Pseudos en un seul appel ; sans eux, repli sur le SteamID.
         const profiles = await deadlock.getSteamProfiles(accountIds).catch(() => []);
         const names = new Map(profiles.map((p) => [p.accountId, p.displayName]));
-        return { info, names: Object.fromEntries(names) as Record<string, string> };
+        return {
+          match: normalizeMatch(info),
+          names: Object.fromEntries(names) as Record<string, string>,
+        };
       });
       if (!detail.data) throw notFound('Partie introuvable.');
 
-      const heroes = await heroIndex();
+      const [heroes, itemIndex, tiers] = await Promise.all([
+        heroIndex(),
+        items.index().catch(() => null),
+        catalog.ranks().catch(() => null),
+      ]);
       const index = heroes?.data ?? {};
-      const { info, names } = detail.data;
-      const winningSide = SIDES[info.winning_team ?? -1] ?? null;
+      const { match: info, names } = detail.data;
+      const winningSide = SIDES[info.winningTeam ?? -1] ?? null;
 
-      const teams = SIDES.map((side, team) => ({
-        side,
-        outcome: side === winningSide ? ('win' as const) : ('loss' as const),
-        players: info.players
-          .filter((p) => p.team === team)
-          .sort((a, b) => (b.net_worth ?? 0) - (a.net_worth ?? 0))
-          .map((p) => {
-            const steamId = p.account_id ? accountIdToSteamId(p.account_id) : null;
-            return {
-              steamId,
-              displayName: (p.account_id && names[p.account_id]) || steamId || 'Joueur inconnu',
-              heroId: p.hero_id,
-              heroName: index[p.hero_id]?.name ?? `Héros #${p.hero_id}`,
-              heroImageUrl: index[p.hero_id]?.imageUrl ?? null,
-              level: p.level ?? null,
-              kills: p.kills ?? null,
-              deaths: p.deaths ?? null,
-              assists: p.assists ?? null,
-              netWorth: p.net_worth ?? null,
-              lastHits: p.last_hits ?? null,
-              denies: p.denies ?? null,
-            };
-          }),
-      }));
+      const teams = SIDES.map((side, team) => {
+        const players = info.players.filter((p) => p.team === team);
+        const teamKills = players.every((p) => p.kills !== null)
+          ? players.reduce((sum, p) => sum + (p.kills ?? 0), 0)
+          : null;
+        const averageBadge = info.averageBadges[team] || null;
+        const averageRank = averageBadge && tiers ? rankFromBadge(averageBadge, tiers.data) : null;
+        return {
+          side,
+          outcome: side === winningSide ? ('win' as const) : ('loss' as const),
+          averageBadge,
+          averageRankName: averageRank?.name ?? null,
+          players: players
+            .sort((a, b) => (b.netWorth ?? 0) - (a.netWorth ?? 0))
+            .map((p) => {
+              const steamId = p.accountId ? accountIdToSteamId(p.accountId) : null;
+              return {
+                steamId,
+                displayName: (p.accountId && names[p.accountId]) || steamId || 'Joueur inconnu',
+                heroId: p.heroId,
+                heroName: index[p.heroId]?.name ?? `Héros #${p.heroId}`,
+                heroImageUrl: index[p.heroId]?.imageUrl ?? null,
+                level: p.level,
+                kills: p.kills,
+                deaths: p.deaths,
+                assists: p.assists,
+                netWorth: p.netWorth,
+                lastHits: p.lastHits,
+                denies: p.denies,
+                mvpRank: p.mvpRank,
+                killParticipation:
+                  teamKills && p.kills !== null && p.assists !== null
+                    ? round2(((p.kills + p.assists) / teamKills) * 100)
+                    : null,
+                stats: p.stats,
+                ...splitItems(p.items, itemIndex),
+              };
+            }),
+        };
+      });
 
       return {
         match: {
           matchId,
-          playedAt: info.start_time ? new Date(info.start_time * 1000).toISOString() : null,
-          durationSeconds: info.duration_s ?? null,
-          matchMode: toMatchMode(info.match_mode),
-          gameMode: toGameMode(info.game_mode),
+          playedAt: info.startTime ? new Date(info.startTime * 1000).toISOString() : null,
+          durationSeconds: info.durationSeconds,
+          matchMode: toMatchMode(info.matchMode),
+          gameMode: toGameMode(info.gameMode),
           winningSide,
           teams,
         },
-        meta: { ...dataMeta(detail), isPartial: !heroes || !info.start_time },
+        meta: {
+          ...dataMeta(detail),
+          isPartial: !heroes || !itemIndex || !info.startTime,
+        },
       };
     },
   };

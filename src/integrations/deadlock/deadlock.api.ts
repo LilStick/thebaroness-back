@@ -20,6 +20,11 @@ import {
   type RawRankAsset,
   type RawSteamProfile,
   playerRanksSchema,
+  clientVersionsSchema,
+  itemAssetsSchema,
+  type RawItemAsset,
+  relationStatsSchema,
+  type RawRelationStats,
 } from './deadlock.schemas';
 
 /** Résumé de joueur normalisé (§19.4 A) : aucun champ brut de Deadlock API ne sort d'ici. */
@@ -64,6 +69,10 @@ function toSteamProfile(raw: RawSteamProfile): SteamProfile {
 /** Accès typé aux endpoints Deadlock API utilisés par l'application. */
 /** Taille d'un lot `account_ids` (Deadlock API en accepte 1000, mais répond souvent 500 au-delà de 500). */
 const RANK_BATCH = 500;
+/** Catalogue complet des items : plusieurs Mo. */
+const ITEMS_TIMEOUT_MS = 30_000;
+/** Agrégats calculés côté source sur tout l'historique : parfois lents. */
+const RELATIONS_TIMEOUT_MS = 15_000;
 /** Un lot de 500 comptes peut dépasser le délai par défaut (6 s) quand la source est froide. */
 const RANK_TIMEOUT_MS = 20_000;
 
@@ -218,6 +227,57 @@ export function createDeadlockApi(client: DeadlockClient) {
     /** `GET /v1/assets/heroes` : tous les héros (filtrage des jouables côté catalogue). */
     async getHeroes(): Promise<RawHero[]> {
       return (await client.get('/v1/assets/heroes', {}, heroesSchema)) ?? [];
+    },
+
+    /**
+     * Joueurs rencontrés (`mates` : même équipe, `enemies` : équipe adverse) depuis `minTimestamp`,
+     * pour un mode de jeu (la source n'agrège pas plusieurs modes). Liste vide si joueur inconnu.
+     */
+    async getRelationStats(
+      accountId: number,
+      kind: 'mates' | 'enemies',
+      options: {
+        minTimestamp: number | null;
+        gameMode: string;
+        minMatches: number;
+        sameParty?: boolean;
+      },
+    ): Promise<RawRelationStats> {
+      return (
+        (await client.get(
+          `/v1/players/${accountId}/${kind === 'mates' ? 'mate' : 'enemy'}-stats`,
+          {
+            game_mode: options.gameMode,
+            min_matches_played: options.minMatches,
+            min_unix_timestamp: options.minTimestamp ?? undefined,
+            same_party: kind === 'mates' && options.sameParty ? true : undefined,
+          },
+          relationStatsSchema,
+          { timeoutMs: RELATIONS_TIMEOUT_MS },
+        )) ?? []
+      );
+    },
+
+    /** `GET /v1/assets/client-versions` : version la plus récente du client, ou null. */
+    async getLatestClientVersion(): Promise<number | null> {
+      const versions =
+        (await client.get('/v1/assets/client-versions', {}, clientVersionsSchema)) ?? [];
+      return versions.length ? Math.max(...versions) : null;
+    },
+
+    /**
+     * `GET /v1/assets/items` (≈ 6 Mo) pour une version du client (dernière si null), en anglais.
+     * Délai étendu : la réponse est volumineuse.
+     */
+    async getItems(clientVersion: number | null): Promise<RawItemAsset[]> {
+      return (
+        (await client.get(
+          '/v1/assets/items',
+          clientVersion === null ? {} : { client_version: clientVersion },
+          itemAssetsSchema,
+          { timeoutMs: ITEMS_TIMEOUT_MS },
+        )) ?? []
+      );
     },
 
     /** `GET /v1/assets/items/by-type/ability` : capacités de tous les héros. */
