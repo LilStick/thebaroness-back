@@ -19,6 +19,8 @@ import { createDocsRouter } from './modules/docs/docs.routes';
 import { createGroupCompareService } from './modules/groups/group.compare';
 import { createGroupRouter } from './modules/groups/group.routes';
 import { healthRouter } from './modules/health/health.routes';
+import { createItemsRouter } from './modules/items/items.routes';
+import { createItemsService } from './modules/items/items.service';
 import { createPlayersRouter } from './modules/players/players.routes';
 import { createPlayersService } from './modules/players/players.service';
 import { createTrackedPlayerRouter } from './modules/tracked-players/tracked-player.routes';
@@ -48,7 +50,8 @@ export function createServices({
   );
   const catalog = createCatalogService(deadlock);
   const players = createPlayersService(deadlock, catalog);
-  return { deadlock, catalog, players };
+  const items = createItemsService(deadlock);
+  return { deadlock, catalog, players, items };
 }
 
 export type Services = ReturnType<typeof createServices>;
@@ -89,7 +92,7 @@ export function createApp({
   );
   app.use(express.json({ limit: '16kb' }));
 
-  const { deadlock, catalog, players } = services;
+  const { deadlock, catalog, players, items } = services;
   const auth = requireAuth(env.JWT_SECRET);
   const authService = createAuthService({
     secret: env.JWT_SECRET,
@@ -113,7 +116,8 @@ export function createApp({
   );
   api.use('/tracked-players', createTrackedPlayerRouter(auth));
   api.use(createCatalogRouter(catalog));
-  api.use(createMetaRouter(createMetaService(deadlock, catalog)));
+  api.use(createMetaRouter(createMetaService(deadlock, catalog, items)));
+  api.use('/items', createItemsRouter(items));
   api.use('/players', createPlayersRouter(players));
   api.use('/groups', createGroupRouter(auth, createGroupCompareService(players, catalog)));
 

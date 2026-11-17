@@ -3,7 +3,13 @@ import { z } from 'zod';
 import { steamIdSchema } from '../../shared/schemas';
 import { parse } from '../../shared/validation';
 import type { PlayersService } from './players.service';
-import { historyFilterSchema, overviewQuerySchema } from './profile-stats';
+import {
+  activityQuerySchema,
+  historyFilterSchema,
+  overviewQuerySchema,
+  rankHistoryQuerySchema,
+  relationshipsQuerySchema,
+} from './profile-stats';
 
 const searchQuerySchema = z.object({
   q: z
@@ -45,6 +51,25 @@ export function createPlayersRouter(players: PlayersService): Router {
     const steamId = parse(steamIdSchema, req.params.steamId);
     const filter = parse(historyFilterSchema.omit({ heroId: true, outcome: true }), req.query);
     res.json(await players.heroes(steamId, { ...filter, outcome: 'all' }));
+  });
+
+  // Historique de rang observé (parties classées au badge connu), période par défaut : saison.
+  router.get('/:steamId/rank-history', async (req, res) => {
+    const steamId = parse(steamIdSchema, req.params.steamId);
+    const { period } = parse(rankHistoryQuerySchema, req.query);
+    res.json(await players.rankHistory(steamId, period));
+  });
+
+  // Coéquipiers et adversaires fréquents (agrégats Deadlock API).
+  router.get('/:steamId/relationships', async (req, res) => {
+    const steamId = parse(steamIdSchema, req.params.steamId);
+    res.json(await players.relationships(steamId, parse(relationshipsQuerySchema, req.query)));
+  });
+
+  // Activité par jour UTC (heatmap), 12 semaines par défaut.
+  router.get('/:steamId/activity', async (req, res) => {
+    const steamId = parse(steamIdSchema, req.params.steamId);
+    res.json(await players.activity(steamId, parse(activityQuerySchema, req.query)));
   });
 
   // Profil V2 : agrégats d'une période (défaut 30d), modes observés, top héros, couverture.

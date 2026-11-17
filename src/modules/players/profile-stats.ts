@@ -26,6 +26,8 @@ export interface ProfileMatch {
   netWorth: number | null;
   matchMode?: MatchMode | null;
   gameMode?: GameMode | null;
+  /** `ranked_display_badge` (tier * 10 + subrank) si connu. */
+  badge?: number | null;
 }
 
 const periodSchema = z.enum(PROFILE_PERIODS, 'period : 7d, 30d ou season');
@@ -252,3 +254,85 @@ export function groupByHero<M extends ProfileMatch>(matches: M[]): Array<[number
   }
   return [...byHero].sort((a, b) => b[1].length - a[1].length || a[0] - b[0]);
 }
+
+/** Historique de rang : `/rank-history`, période par défaut `season`. */
+export const rankHistoryQuerySchema = z.object({ period: periodSchema.default('season') });
+
+/**
+ * Points de rang observés sur les parties classées de la sélection, du plus ancien au plus récent.
+ * Seules les parties dont le badge est connu donnent un point (aucune interpolation).
+ */
+export function rankPoints(matches: ProfileMatch[]) {
+  const ranked = matches.filter((m) => m.matchMode === 'ranked' || m.badge);
+  const points = ranked
+    .filter((m): m is ProfileMatch & { badge: number } => Boolean(m.badge))
+    .sort((a, b) => a.startTime - b.startTime || compareMatchIds(a.matchId, b.matchId))
+    .map((m) => ({ at: m.startTime, matchId: m.matchId, badge: m.badge, win: m.win }));
+  return { points, rankedMatches: ranked.length, missingBadge: ranked.length - points.length };
+}
+
+/** Comparaison de deux matchId (chaînes d'entiers) sans perte de précision. */
+export const compareMatchIds = (a: string, b: string) =>
+  a.length - b.length || (a < b ? -1 : a > b ? 1 : 0);
+
+/** Activité : 1 à 52 semaines (défaut 12), filtres de mode optionnels. */
+export const activityQuerySchema = z.object({
+  weeks: z.coerce
+    .number('weeks : entier entre 1 et 52')
+    .int('weeks : entier entre 1 et 52')
+    .min(1, 'weeks : entier entre 1 et 52')
+    .max(52, 'weeks : entier entre 1 et 52')
+    .default(12),
+  gameMode: gameModeSchema.default('all'),
+  matchMode: matchModeSchema.default('all'),
+});
+export type ActivityQuery = z.infer<typeof activityQuerySchema>;
+
+/** Fenêtre d'activité : de minuit UTC il y a `weeks * 7 - 1` jours jusqu'à maintenant. */
+export function activityWindow(weeks: number, nowMs: number): PeriodWindow {
+  const to = Math.floor(nowMs / 1000);
+  const todayStart = to - (to % DAY_S);
+  return { from: todayStart - (weeks * 7 - 1) * DAY_S, to, seasonUnknown: false };
+}
+
+/** Un jour UTC par case, jours sans partie compris (0 connu : l'historique source est complet). */
+export function activityDays(matches: ProfileMatch[], window: PeriodWindow) {
+  const from = window.from ?? window.to;
+  const count = Math.floor((window.to - from) / DAY_S) + 1;
+  const days = Array.from({ length: count }, (_, i) => ({
+    date: new Date((from + i * DAY_S) * 1000).toISOString().slice(0, 10),
+    matches: 0,
+    wins: 0,
+    losses: 0,
+  }));
+  for (const m of matches) {
+    const day = days[Math.floor((m.startTime - from) / DAY_S)];
+    if (!day) continue;
+    day.matches++;
+    if (m.win) day.wins++;
+    else day.losses++;
+  }
+  return days;
+}
+
+/** Coéquipiers et adversaires : période optionnelle (tout l'historique par défaut). */
+export const relationshipsQuerySchema = z.object({
+  period: periodSchema.optional(),
+  gameMode: z
+    .enum(['normal', 'street_brawl'], 'gameMode : normal ou street_brawl')
+    .default('normal'),
+  sameParty: z.enum(['true', 'false'], 'sameParty : true ou false').default('false'),
+  minMatches: z.coerce
+    .number('minMatches : entier entre 1 et 50')
+    .int('minMatches : entier entre 1 et 50')
+    .min(1, 'minMatches : entier entre 1 et 50')
+    .max(50, 'minMatches : entier entre 1 et 50')
+    .default(2),
+  limit: z.coerce
+    .number('limit : entier entre 1 et 50')
+    .int('limit : entier entre 1 et 50')
+    .min(1, 'limit : entier entre 1 et 50')
+    .max(50, 'limit : entier entre 1 et 50')
+    .default(10),
+});
+export type RelationshipsQuery = z.infer<typeof relationshipsQuerySchema>;

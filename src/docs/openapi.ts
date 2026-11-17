@@ -5,7 +5,7 @@ import type { OpenAPIV3_1 as O } from 'openapi-types';
  * Servi sur /api/openapi.json et /api/docs ; exporté dans docs/openapi.yaml (`npm run openapi`).
  * Versionnement : majeure = changement incompatible, mineure = ajout, patch = correction.
  */
-export const OPENAPI_VERSION = '1.9.0';
+export const OPENAPI_VERSION = '1.10.0';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const response = (name: string) => ({ $ref: `#/components/responses/${name}` });
@@ -526,6 +526,167 @@ export const openApiDocument: O.Document = {
           '404': response('NotFound'),
           '429': response('RateLimited'),
           '502': response('UpstreamError'),
+          '503': response('ServiceUnavailable'),
+        },
+      },
+    },
+    '/players/{steamId}/rank-history': {
+      get: {
+        tags: ['Joueurs'],
+        summary: 'Historique de rang observé',
+        description:
+          'Un point par partie classée dont le badge est connu (`ranked_display_badge`), du plus ancien au plus récent. Aucune interpolation ni MMR : les parties classées sans badge sont comptées dans `coverage.missingBadge`. `score = tier × 6 + subrank` (échelle des comparaisons de groupe).',
+        parameters: [
+          steamIdParam,
+          {
+            name: 'period',
+            in: 'query',
+            schema: { type: 'string', enum: ['7d', '30d', 'season'], default: 'season' },
+          },
+        ],
+        responses: {
+          '200': { description: 'Points de rang', content: json(ref('RankHistory')) },
+          '400': response('BadRequest'),
+          '404': response('NotFound'),
+          '429': response('RateLimited'),
+          '503': response('ServiceUnavailable'),
+        },
+      },
+    },
+    '/players/{steamId}/activity': {
+      get: {
+        tags: ['Joueurs'],
+        summary: 'Activité par jour (heatmap)',
+        description:
+          'Un jour UTC par case, du plus ancien au plus récent (aujourd’hui inclus) ; les jours sans partie valent 0 (l’historique de la source est complet).',
+        parameters: [
+          steamIdParam,
+          {
+            name: 'weeks',
+            in: 'query',
+            schema: { type: 'integer', minimum: 1, maximum: 52, default: 12 },
+          },
+          gameModeParam,
+          matchModeParam,
+        ],
+        responses: {
+          '200': { description: 'Jours', content: json(ref('PlayerActivity')) },
+          '400': response('BadRequest'),
+          '404': response('NotFound'),
+          '429': response('RateLimited'),
+          '503': response('ServiceUnavailable'),
+        },
+      },
+    },
+    '/players/{steamId}/relationships': {
+      get: {
+        tags: ['Joueurs'],
+        summary: 'Coéquipiers et adversaires fréquents',
+        description:
+          'Agrégats Deadlock API (`mate-stats`, `enemy-stats`) : parties communes et victoires DU JOUEUR DEMANDÉ. Un joueur souvent rencontré n’est pas un ami Steam ; `sameParty=true` ne garde que les parties jouées dans le même groupe (information de la source). Un seul mode par requête (la source n’agrège pas). Cache 10 min.',
+        parameters: [
+          steamIdParam,
+          periodParam(false),
+          {
+            name: 'gameMode',
+            in: 'query',
+            schema: { type: 'string', enum: ['normal', 'street_brawl'], default: 'normal' },
+          },
+          {
+            name: 'sameParty',
+            in: 'query',
+            description: 'Coéquipiers : seulement les parties jouées dans le même groupe',
+            schema: { type: 'string', enum: ['true', 'false'], default: 'false' },
+          },
+          {
+            name: 'minMatches',
+            in: 'query',
+            schema: { type: 'integer', minimum: 1, maximum: 50, default: 2 },
+          },
+          {
+            name: 'limit',
+            in: 'query',
+            schema: { type: 'integer', minimum: 1, maximum: 50, default: 10 },
+          },
+        ],
+        responses: {
+          '200': { description: 'Relations', content: json(ref('PlayerRelationships')) },
+          '400': response('BadRequest'),
+          '404': response('NotFound'),
+          '429': response('RateLimited'),
+          '503': response('ServiceUnavailable'),
+        },
+      },
+    },
+    '/items': {
+      get: {
+        tags: ['Catalogue'],
+        summary: 'Catalogue des items (objets, capacités, armes)',
+        description:
+          'Catalogue normalisé, instantané immuable par version du client Deadlock (`clientVersion`, la plus récente par défaut, relue chaque heure). `id` = identifiant des achats de `/matches/{matchId}`.',
+        parameters: [
+          {
+            name: 'type',
+            in: 'query',
+            schema: { type: 'string', enum: ['upgrade', 'ability', 'weapon'] },
+          },
+          {
+            name: 'slot',
+            in: 'query',
+            schema: { type: 'string', enum: ['weapon', 'vitality', 'spirit'] },
+          },
+          { name: 'tier', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 5 } },
+          { name: 'shopable', in: 'query', schema: { type: 'string', enum: ['true', 'false'] } },
+          {
+            name: 'clientVersion',
+            in: 'query',
+            description: 'Version du client (anciennes parties) ; absente : la plus récente',
+            schema: { type: 'integer', minimum: 1 },
+          },
+        ],
+        responses: {
+          '200': {
+            description: 'Items',
+            content: json({
+              type: 'object',
+              required: ['clientVersion', 'items', 'meta'],
+              properties: {
+                clientVersion: nullable('integer'),
+                items: { type: 'array', items: ref('CatalogItem') },
+                meta: ref('DataMeta'),
+              },
+            }),
+          },
+          '400': response('BadRequest'),
+          '429': response('RateLimited'),
+          '503': response('ServiceUnavailable'),
+        },
+      },
+    },
+    '/items/{itemId}': {
+      get: {
+        tags: ['Catalogue'],
+        summary: 'Un item',
+        parameters: [
+          { name: 'itemId', in: 'path', required: true, schema: { type: 'integer', minimum: 0 } },
+          { name: 'clientVersion', in: 'query', schema: { type: 'integer', minimum: 1 } },
+        ],
+        responses: {
+          '200': {
+            description: 'Item',
+            content: json({
+              type: 'object',
+              required: ['clientVersion', 'item', 'meta'],
+              properties: {
+                clientVersion: nullable('integer'),
+                item: ref('CatalogItem'),
+                meta: ref('DataMeta'),
+              },
+            }),
+          },
+          '400': response('BadRequest'),
+          '404': response('NotFound'),
+          '429': response('RateLimited'),
           '503': response('ServiceUnavailable'),
         },
       },
@@ -1280,6 +1441,12 @@ export const openApiDocument: O.Document = {
           'netWorth',
           'lastHits',
           'denies',
+          'mvpRank',
+          'killParticipation',
+          'stats',
+          'purchases',
+          'finalItemIds',
+          'abilityUpgrades',
         ],
         properties: {
           steamId: nullable('string'),
@@ -1294,6 +1461,85 @@ export const openApiDocument: O.Document = {
           netWorth: nullable('integer'),
           lastHits: nullable('integer'),
           denies: nullable('integer'),
+          mvpRank: nullable('integer', {
+            description:
+              'Classement MVP calculé par Valve (1 = meilleur) ; null si absent de la source.',
+          }),
+          killParticipation: nullable('number', {
+            description:
+              '`(kills + assists) / éliminations de l’équipe × 100`, 2 décimales ; null si une valeur de l’équipe est inconnue.',
+          }),
+          stats: {
+            oneOf: [{ type: 'null' }, ref('MatchPlayerStats')],
+            description:
+              'Statistiques de fin de partie (dernier relevé de la source) ; null si absentes.',
+          },
+          purchases: {
+            type: ['array', 'null'],
+            description:
+              'Achats d’objets (type `upgrade` du catalogue `/items`), par heure d’achat. null si catalogue ou évènements indisponibles.',
+            items: {
+              type: 'object',
+              required: ['itemId', 'atSeconds', 'soldAtSeconds'],
+              properties: {
+                itemId: { type: 'integer', description: 'Identifiant de `/items/{itemId}`' },
+                atSeconds: nullable('integer', { description: 'Seconde de jeu de l’achat' }),
+                soldAtSeconds: nullable('integer', {
+                  description: 'Seconde de revente, null si gardé',
+                }),
+              },
+            },
+          },
+          finalItemIds: {
+            type: ['array', 'null'],
+            items: { type: 'integer' },
+            description:
+              'Objets achetés et jamais revendus (inventaire de fin), dans l’ordre d’achat.',
+          },
+          abilityUpgrades: {
+            type: ['array', 'null'],
+            description: 'Montées de capacités (type `ability` du catalogue), par heure.',
+            items: {
+              type: 'object',
+              required: ['abilityId', 'atSeconds'],
+              properties: {
+                abilityId: { type: 'integer' },
+                atSeconds: nullable('integer'),
+              },
+            },
+          },
+        },
+      },
+      MatchPlayerStats: {
+        type: 'object',
+        description: 'Valeurs de fin de partie ; toute valeur absente de la source vaut null.',
+        properties: {
+          playerDamage: nullable('number', { description: 'Dégâts infligés aux héros' }),
+          damageTaken: nullable('number', { description: 'Dégâts subis des héros' }),
+          objectiveDamage: nullable('number', {
+            description: 'Dégâts aux objectifs (gardiens, walkers…)',
+          }),
+          creepDamage: nullable('number'),
+          neutralDamage: nullable('number'),
+          healing: nullable('number', { description: 'Soins prodigués (total)' }),
+          selfHealing: nullable('number'),
+          teammateHealing: nullable('number'),
+          damageMitigated: nullable('number'),
+          heroBulletsHit: nullable('number', { description: 'Balles ayant touché un héros' }),
+          heroBulletsHitCrit: nullable('number', {
+            description: 'Dont coups critiques (tirs à la tête)',
+          }),
+          heroCritRate: nullable('number', {
+            description: '`heroBulletsHitCrit / heroBulletsHit × 100`',
+          }),
+          shotsHit: nullable('number'),
+          shotsMissed: nullable('number'),
+          accuracy: nullable('number', {
+            description: '`shotsHit / (shotsHit + shotsMissed) × 100`, toutes cibles',
+          }),
+          headshotKills: nullable('number'),
+          creepKills: nullable('number'),
+          neutralKills: nullable('number'),
         },
       },
       MatchDetail: {
@@ -1318,10 +1564,14 @@ export const openApiDocument: O.Document = {
             type: 'array',
             items: {
               type: 'object',
-              required: ['side', 'outcome', 'players'],
+              required: ['side', 'outcome', 'averageBadge', 'averageRankName', 'players'],
               properties: {
                 side: { type: 'string', enum: ['amber', 'sapphire'] },
                 outcome: { type: 'string', enum: ['win', 'loss'] },
+                averageBadge: nullable('integer', {
+                  description: 'Badge moyen de l’équipe (tier × 10 + subrank) ; null si inconnu.',
+                }),
+                averageRankName: nullable('string', { description: 'Ex. « Phantom 4 »' }),
                 players: { type: 'array', items: ref('MatchPlayer') },
               },
             },
@@ -1360,6 +1610,215 @@ export const openApiDocument: O.Document = {
               'Moyenne des ratios par partie `netWorth / (durationSeconds / 60)` (net worth connu, durée > 0).',
           }),
           netWorthPerMinuteSampleSize: sampleSize('le net worth par minute'),
+        },
+      },
+      CatalogItem: {
+        type: 'object',
+        required: [
+          'id',
+          'className',
+          'name',
+          'type',
+          'slot',
+          'tier',
+          'cost',
+          'isActive',
+          'shopable',
+          'disabled',
+          'heroIds',
+          'componentIds',
+          'imageUrl',
+        ],
+        properties: {
+          id: { type: 'integer' },
+          className: { type: 'string' },
+          name: nullable('string'),
+          type: { type: ['string', 'null'], enum: ['upgrade', 'ability', 'weapon', null] },
+          slot: nullable('string', {
+            description: '`weapon`, `vitality`, `spirit` pour les objets',
+          }),
+          tier: nullable('integer'),
+          cost: nullable('integer'),
+          isActive: { type: ['boolean', 'null'] },
+          shopable: { type: 'boolean' },
+          disabled: { type: 'boolean' },
+          heroIds: { type: 'array', items: { type: 'integer' } },
+          componentIds: {
+            type: 'array',
+            items: { type: 'integer' },
+            description: 'Objets dont celui-ci est l’amélioration',
+          },
+          imageUrl: nullable('string', {
+            description: 'Icône de boutique (objets) ou icône (capacités)',
+          }),
+        },
+      },
+      RankHistory: {
+        type: 'object',
+        required: ['period', 'points', 'coverage', 'meta'],
+        properties: {
+          period: { type: 'string', enum: ['7d', '30d', 'season'] },
+          points: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: [
+                'at',
+                'matchId',
+                'badge',
+                'tier',
+                'subrank',
+                'score',
+                'name',
+                'imageUrl',
+                'outcome',
+              ],
+              properties: {
+                at: { type: 'string', format: 'date-time' },
+                matchId: { type: 'string' },
+                badge: { type: 'integer', description: 'tier × 10 + subrank (Valve)' },
+                tier: { type: 'integer' },
+                subrank: { type: 'integer' },
+                score: { type: 'integer', description: 'tier × 6 + subrank (1 à 72)' },
+                name: nullable('string', { description: 'null sans catalogue des rangs' }),
+                imageUrl: nullable('string'),
+                outcome: { type: 'string', enum: ['win', 'loss'] },
+              },
+            },
+          },
+          coverage: {
+            type: 'object',
+            required: [
+              'requestedFrom',
+              'requestedTo',
+              'rankedMatches',
+              'pointCount',
+              'missingBadge',
+              'isPartial',
+              'notes',
+            ],
+            properties: {
+              requestedFrom: nullable('string', { format: 'date-time' }),
+              requestedTo: { type: 'string', format: 'date-time' },
+              rankedMatches: { type: 'integer', description: 'Parties classées de la période' },
+              pointCount: { type: 'integer' },
+              missingBadge: {
+                type: 'integer',
+                description: 'Parties classées sans badge dans la source',
+              },
+              isPartial: { type: 'boolean' },
+              notes: {
+                type: 'array',
+                items: {
+                  type: 'string',
+                  enum: [
+                    'season_start_unknown',
+                    'badge_missing_on_some_ranked_matches',
+                    'history_stale',
+                  ],
+                },
+              },
+            },
+          },
+          meta: ref('DataMeta'),
+        },
+      },
+      PlayerActivity: {
+        type: 'object',
+        required: ['weeks', 'filters', 'days', 'summary', 'coverage', 'meta'],
+        properties: {
+          weeks: { type: 'integer' },
+          filters: {
+            type: 'object',
+            required: ['gameMode', 'matchMode'],
+            properties: {
+              gameMode: { type: 'string', enum: ['all', 'normal', 'street_brawl'] },
+              matchMode: { type: 'string', enum: ['all', 'ranked', 'unranked'] },
+            },
+          },
+          days: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['date', 'matches', 'wins', 'losses'],
+              properties: {
+                date: { type: 'string', format: 'date', description: 'Jour UTC' },
+                matches: { type: 'integer' },
+                wins: { type: 'integer' },
+                losses: { type: 'integer' },
+              },
+            },
+          },
+          summary: {
+            type: 'object',
+            required: ['matches', 'wins', 'losses', 'activeDays'],
+            properties: {
+              matches: { type: 'integer' },
+              wins: { type: 'integer' },
+              losses: { type: 'integer' },
+              activeDays: { type: 'integer' },
+            },
+          },
+          coverage: {
+            type: 'object',
+            required: ['from', 'to', 'timezone', 'excludedUnknownMode', 'notes'],
+            properties: {
+              from: nullable('string', { format: 'date' }),
+              to: nullable('string', { format: 'date' }),
+              timezone: { type: 'string', enum: ['UTC'] },
+              excludedUnknownMode: { type: 'integer' },
+              notes: { type: 'array', items: { type: 'string', enum: ['history_stale'] } },
+            },
+          },
+          meta: ref('DataMeta'),
+        },
+      },
+      RelatedPlayer: {
+        type: 'object',
+        required: ['steamId', 'displayName', 'avatarUrl', 'matches', 'wins', 'losses', 'winRate'],
+        properties: {
+          steamId: { type: 'string' },
+          displayName: { type: 'string', description: 'Pseudo Steam, repli : SteamID' },
+          avatarUrl: nullable('string'),
+          matches: { type: 'integer', description: 'Parties communes' },
+          wins: { type: 'integer', description: 'Victoires du joueur demandé dans ces parties' },
+          losses: { type: 'integer' },
+          winRate: nullable('number'),
+        },
+      },
+      PlayerRelationships: {
+        type: 'object',
+        required: ['appliedFilters', 'teammates', 'opponents', 'coverage', 'meta'],
+        properties: {
+          appliedFilters: {
+            type: 'object',
+            required: ['period', 'gameMode', 'sameParty', 'minMatches', 'limit'],
+            properties: {
+              period: { type: ['string', 'null'], enum: ['7d', '30d', 'season', null] },
+              gameMode: { type: 'string', enum: ['normal', 'street_brawl'] },
+              sameParty: { type: 'boolean' },
+              minMatches: { type: 'integer' },
+              limit: { type: 'integer' },
+            },
+          },
+          teammates: {
+            type: ['array', 'null'],
+            items: ref('RelatedPlayer'),
+            description: 'Par parties communes décroissantes ; null si la source est indisponible',
+          },
+          opponents: { type: ['array', 'null'], items: ref('RelatedPlayer') },
+          coverage: {
+            type: 'object',
+            required: ['requestedFrom', 'notes'],
+            properties: {
+              requestedFrom: nullable('string', {
+                format: 'date-time',
+                description: 'Borne basse transmise à la source (arrondie à 10 min vers le passé)',
+              }),
+              notes: { type: 'array', items: { type: 'string', enum: ['season_start_unknown'] } },
+            },
+          },
+          meta: ref('DataMeta'),
         },
       },
       AppliedFilters: {

@@ -385,6 +385,14 @@ describe('Routes P1 (classement, stats méta, partie, héros d’un joueur)', ()
         netWorth: 40000,
         lastHits: 200,
         denies: 10,
+        // Ajouts v1.10.0 : source sans MVP ni relevés, catalogue d'items absent → null.
+        mvpRank: null,
+        // (5 + 9) / 10 éliminations de l'équipe
+        killParticipation: 140,
+        stats: null,
+        purchases: null,
+        finalItemIds: null,
+        abilityUpgrades: null,
       });
       // Profil introuvable → SteamID ; compte inconnu (0) → steamId null.
       expect(match.teams[0].players[1].displayName).toBe('76561197960265738');

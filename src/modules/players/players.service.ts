@@ -1,4 +1,7 @@
 import {
+  type ActivityQuery,
+  activityDays,
+  activityWindow,
   aggregate,
   appliedFilters,
   filterFingerprint,
@@ -9,6 +12,9 @@ import {
   modeBreakdown,
   type OverviewFilter,
   periodWindow,
+  type ProfilePeriod,
+  rankPoints,
+  type RelationshipsQuery,
   selectMatches,
 } from './profile-stats';
 import {
@@ -25,18 +31,37 @@ import type {
 } from '../../integrations/deadlock/deadlock.api';
 import type { RawMatchHistoryEntry } from '../../integrations/deadlock/deadlock.schemas';
 import { invalidInput, notFound } from '../../shared/errors';
-import { isSteamId64, steamIdToAccountId } from '../../shared/schemas';
+import { accountIdToSteamId, isSteamId64, steamIdToAccountId } from '../../shared/schemas';
 import type { CatalogService } from '../catalog/catalog.service';
-import { rankFromBadge, UNRANKED, type PlayerRank } from '../catalog/ranks';
+import { rankFromBadge, rankScore, UNRANKED, type PlayerRank } from '../catalog/ranks';
 
 /** TTL initiaux (§9.2) : choix du projet, pas des garanties du fournisseur. */
 const TTL = {
   search: 5 * 60_000,
   profile: 15 * 60_000,
   history: 3 * 60_000,
+  /** Coéquipiers et adversaires : agrégats lourds côté source. */
+  relations: 10 * 60_000,
 } as const;
 
 const SEARCH_LIMIT = 20;
+/** Coéquipiers/adversaires gardés en cache par liste (la réponse en montre `limit` ≤ 50). */
+const RELATIONS_MAX = 50;
+/** Borne basse des périodes glissantes arrondie à 10 min (partage du cache). */
+const RELATIONS_BUCKET_S = 600;
+
+interface RelationRow {
+  accountId: number;
+  wins: number;
+  matches: number;
+}
+
+interface RelationsSnapshot {
+  teammates: RelationRow[] | null;
+  opponents: RelationRow[] | null;
+  profiles: Record<string, PlayerSummary> | null;
+  complete: boolean;
+}
 /** Héros mis en avant par `/overview`. */
 const TOP_HEROES = 3;
 
@@ -90,7 +115,7 @@ export interface MatchSummary {
 
 /**
  * Partie compacte stockée en cache : seulement les parties classées victoire/défaite
- * (`player_match_outcome` 1 ou 2), triées de la plus récente à la plus ancienne.
+ * (voir `matchWin`), triées de la plus récente à la plus ancienne.
  */
 export interface StoredMatch {
   matchId: string;
@@ -122,14 +147,36 @@ const NULL_STATS: PlayerStats = {
 
 const round2 = (value: number) => Math.round(value * 100) / 100;
 
+/**
+ * Résultat d'une partie pour le joueur, ou `null` si elle n'est pas scorée pour lui.
+ * 1/2 : victoire/défaite. 0 (parties anciennes, résultat par joueur non enregistré) : déduit de
+ * l'équipe gagnante, sauf abandon. 3/4/5 (abandon, pénalité, non scoré) : exclue.
+ */
+export function matchWin(entry: RawMatchHistoryEntry): boolean | null {
+  if (entry.player_match_outcome === 1) return true;
+  if (entry.player_match_outcome === 2) return false;
+  if (
+    entry.player_match_outcome === 0 &&
+    !entry.abandoned_time_s &&
+    (entry.match_result === 0 || entry.match_result === 1) &&
+    (entry.player_team === 0 || entry.player_team === 1)
+  ) {
+    return entry.match_result === entry.player_team;
+  }
+  return null;
+}
+
 function toStoredMatches(entries: RawMatchHistoryEntry[]): StoredMatch[] {
   return entries
-    .filter((entry) => entry.player_match_outcome === 1 || entry.player_match_outcome === 2)
-    .map((entry) => ({
+    .flatMap((entry) => {
+      const win = matchWin(entry);
+      return win === null ? [] : [{ entry, win }];
+    })
+    .map(({ entry, win }) => ({
       matchId: String(entry.match_id),
       heroId: entry.hero_id,
       startTime: entry.start_time,
-      win: entry.player_match_outcome === 1,
+      win,
       duration: entry.match_duration_s ?? null,
       kills: entry.player_kills ?? null,
       deaths: entry.player_deaths ?? null,
@@ -236,7 +283,8 @@ export function createPlayersService(deadlock: DeadlockApi, catalog: CatalogServ
 
   const historyOf = (accountId: number, options?: ReadOptions) =>
     cached<StoredMatch[]>(
-      `history:${accountId}`,
+      // v2 : parties anciennes (outcome 0) incluses ; les copies v1 en sont dépourvues.
+      `history:v2:${accountId}`,
       { ttlMs: TTL.history, maxAgeMs: maxAge(options) },
       async () => toStoredMatches(await deadlock.getMatchHistory(accountId)),
     );
@@ -400,6 +448,176 @@ export function createPlayersService(deadlock: DeadlockApi, catalog: CatalogServ
         meta: meta(heroes ? [history, heroes] : [history], {
           isPartial: !heroes || window.seasonUnknown,
         }),
+      };
+    },
+
+    /**
+     * Historique de rang : un point par partie classée dont le badge est connu, du plus ancien au
+     * plus récent. Score = `tier * 6 + subrank` (même échelle que la comparaison de groupe).
+     */
+    async rankHistory(steamId: string, period: ProfilePeriod) {
+      const [, history, ranks, seasonStart] = await Promise.all([
+        requireProfile(steamId),
+        historyOf(steamIdToAccountId(steamId)),
+        catalog.ranks().catch(() => null),
+        period === 'season' ? catalog.seasonStart().catch(() => null) : null,
+      ]);
+      const window = periodWindow(period, Date.now(), seasonStart);
+      const { matches } = selectMatches(history.data, {}, window);
+      const { points, rankedMatches, missingBadge } = rankPoints(matches);
+      const iso = (seconds: number) => new Date(seconds * 1000).toISOString();
+      return {
+        period,
+        points: points.map((p) => {
+          const rank = ranks ? rankFromBadge(p.badge, ranks.data) : null;
+          return {
+            at: iso(p.at),
+            matchId: p.matchId,
+            badge: p.badge,
+            tier: Math.floor(p.badge / 10),
+            subrank: p.badge % 10,
+            score: rankScore(p.badge),
+            name: rank?.name ?? null,
+            imageUrl: rank?.imageUrl ?? null,
+            outcome: p.win ? ('win' as const) : ('loss' as const),
+          };
+        }),
+        coverage: {
+          requestedFrom: window.from === null ? null : iso(window.from),
+          requestedTo: iso(window.to),
+          rankedMatches,
+          pointCount: points.length,
+          missingBadge,
+          isPartial: window.seasonUnknown,
+          notes: [
+            ...(window.seasonUnknown ? ['season_start_unknown'] : []),
+            ...(missingBadge ? ['badge_missing_on_some_ranked_matches'] : []),
+            ...(history.isStale ? ['history_stale'] : []),
+          ],
+        },
+        meta: meta(ranks ? [history, ranks] : [history], {
+          isPartial: !ranks || window.seasonUnknown,
+        }),
+      };
+    },
+
+    /** Activité par jour UTC sur `weeks` semaines (heatmap), depuis l'historique en cache. */
+    async activity(steamId: string, query: ActivityQuery) {
+      const [, history] = await Promise.all([
+        requireProfile(steamId),
+        historyOf(steamIdToAccountId(steamId)),
+      ]);
+      const window = activityWindow(query.weeks, Date.now());
+      const selection = selectMatches(history.data, query, window);
+      const days = activityDays(selection.matches, window);
+      const wins = selection.matches.filter((m) => m.win).length;
+      return {
+        weeks: query.weeks,
+        filters: { gameMode: query.gameMode, matchMode: query.matchMode },
+        days,
+        summary: {
+          matches: selection.matches.length,
+          wins,
+          losses: selection.matches.length - wins,
+          activeDays: days.filter((d) => d.matches > 0).length,
+        },
+        coverage: {
+          from: days[0]?.date ?? null,
+          to: days.at(-1)?.date ?? null,
+          timezone: 'UTC',
+          excludedUnknownMode: selection.excludedUnknownMode,
+          notes: history.isStale ? ['history_stale'] : [],
+        },
+        meta: meta([history]),
+      };
+    },
+
+    /**
+     * Coéquipiers et adversaires fréquents (agrégats Deadlock API, `wins` = victoires du joueur).
+     * Un joueur souvent rencontré n'est PAS présenté comme un ami Steam ; `sameParty` ne garde que
+     * les parties jouées dans le même groupe (information de la source).
+     */
+    async relationships(steamId: string, query: RelationshipsQuery) {
+      const accountId = steamIdToAccountId(steamId);
+      const [, seasonStart] = await Promise.all([
+        requireProfile(steamId),
+        query.period === 'season' ? catalog.seasonStart().catch(() => null) : null,
+      ]);
+      const window = periodWindow(query.period, Date.now(), seasonStart);
+      const sameParty = query.sameParty === 'true';
+      // Borne basse arrondie à 10 min (vers le passé) : requêtes voisines = même entrée de cache.
+      const minTimestamp =
+        window.from === null ? null : window.from - (window.from % RELATIONS_BUCKET_S);
+      const result = await cached(
+        `relations:v1:${accountId}:${minTimestamp ?? 'all'}:${query.gameMode}:${sameParty}:${query.minMatches}`,
+        { ttlMs: (data: RelationsSnapshot) => (data.complete ? TTL.relations : 60_000) },
+        async (): Promise<RelationsSnapshot> => {
+          const options = {
+            minTimestamp,
+            gameMode: query.gameMode,
+            minMatches: query.minMatches,
+            sameParty,
+          };
+          const [mates, enemies] = await Promise.allSettled([
+            deadlock.getRelationStats(accountId, 'mates', options),
+            deadlock.getRelationStats(accountId, 'enemies', options),
+          ]);
+          if (mates.status === 'rejected' && enemies.status === 'rejected') throw mates.reason;
+          const top = (settled: typeof mates, idKey: 'mate_id' | 'enemy_id') =>
+            settled.status === 'fulfilled'
+              ? settled.value
+                  .flatMap((r) => {
+                    const id = r[idKey];
+                    return id ? [{ accountId: id, wins: r.wins, matches: r.matches_played }] : [];
+                  })
+                  .sort(
+                    (a, b) => b.matches - a.matches || b.wins - a.wins || a.accountId - b.accountId,
+                  )
+                  .slice(0, RELATIONS_MAX)
+              : null;
+          const teammates = top(mates, 'mate_id');
+          const opponents = top(enemies, 'enemy_id');
+          // Pseudos et avatars en un seul appel ; sans eux, repli sur le SteamID.
+          const ids = [...(teammates ?? []), ...(opponents ?? [])].map((r) => r.accountId);
+          const profiles = await deadlock.getSteamProfiles(ids).catch(() => null);
+          return {
+            teammates,
+            opponents,
+            profiles: profiles ? Object.fromEntries(profiles.map((p) => [p.accountId, p])) : null,
+            complete: teammates !== null && opponents !== null && profiles !== null,
+          };
+        },
+      );
+      const { teammates, opponents, profiles } = result.data;
+      const present = (list: RelationRow[] | null) =>
+        list?.slice(0, query.limit).map((r) => {
+          const profile = profiles?.[r.accountId];
+          const id = accountIdToSteamId(r.accountId);
+          return {
+            steamId: id,
+            displayName: profile?.displayName ?? id,
+            avatarUrl: profile?.avatarUrl ?? null,
+            matches: r.matches,
+            wins: r.wins,
+            losses: r.matches - r.wins,
+            winRate: r.matches ? Math.round((r.wins / r.matches) * 10_000) / 100 : null,
+          };
+        }) ?? null;
+      return {
+        appliedFilters: {
+          period: query.period ?? null,
+          gameMode: query.gameMode,
+          sameParty,
+          minMatches: query.minMatches,
+          limit: query.limit,
+        },
+        teammates: present(teammates),
+        opponents: present(opponents),
+        coverage: {
+          requestedFrom: minTimestamp === null ? null : new Date(minTimestamp * 1000).toISOString(),
+          notes: window.seasonUnknown ? ['season_start_unknown'] : [],
+        },
+        meta: meta([result], { isPartial: !result.data.complete || window.seasonUnknown }),
       };
     },
 

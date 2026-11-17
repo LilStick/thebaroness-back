@@ -16,7 +16,11 @@ export const steamProfileSchema = z.object({
 export const steamProfilesSchema = z.array(steamProfileSchema);
 export type RawSteamProfile = z.infer<typeof steamProfileSchema>;
 
-/** `player_match_outcome` : 1 victoire, 2 défaite ; 0/3/4/5 = invalide, pénalisé, non scoré. */
+/**
+ * `player_match_outcome` : 1 victoire, 2 défaite ; 0 = non enregistré (parties anciennes, avant
+ * mi-2026 : le résultat se déduit de `match_result === player_team`) ; 3/4/5 = abandon, pénalité,
+ * non scoré.
+ */
 export const matchHistoryEntrySchema = z.object({
   match_id: z.number().int().nonnegative(),
   hero_id: z.number().int().nonnegative(),
@@ -27,6 +31,11 @@ export const matchHistoryEntrySchema = z.object({
   player_assists: z.number().int().nonnegative().nullish(),
   net_worth: z.number().int().nonnegative().nullish(),
   player_match_outcome: z.number().int(),
+  /** Équipe gagnante (0 ou 1) et équipe du joueur : résultat des parties anciennes (outcome 0). */
+  match_result: z.number().int().nullish(),
+  player_team: z.number().int().nullish(),
+  /** Instant d'abandon du joueur (s), 0 ou absent s'il n'a pas quitté. */
+  abandoned_time_s: z.number().int().nullish(),
   /** Badge affiché en partie classée : `tier * 10 + subrank` (ex. 113 = tier 11, sous-rang 3). */
   ranked_display_badge: z.number().int().nonnegative().nullish(),
   /** Index de `ActiveMatchMode` (1 = unranked, 4 = ranked…), voir game-modes.ts. */
@@ -132,6 +141,9 @@ export const matchMetadataSchema = z.object({
     winning_team: z.number().int().nullish(),
     match_mode: z.number().int().nullish(),
     game_mode: z.number().int().nullish(),
+    /** Badge moyen de chaque équipe (tier * 10 + subrank), 0 ou absent si inconnu. */
+    average_badge_team0: z.number().int().nullish(),
+    average_badge_team1: z.number().int().nullish(),
     players: z.array(
       z.object({
         account_id: z.number().int().nullish(),
@@ -144,6 +156,43 @@ export const matchMetadataSchema = z.object({
         last_hits: z.number().int().nullish(),
         denies: z.number().int().nullish(),
         level: z.number().int().nullish(),
+        /** Classement MVP calculé par Valve (1 = meilleur), absent pour certains joueurs. */
+        mvp_rank: z.number().int().nullish(),
+        /** Achats (objets) et montées de capacités, horodatés en secondes de jeu. */
+        items: z
+          .array(
+            z.object({
+              item_id: z.number().int().nonnegative(),
+              game_time_s: z.number().int().nullish(),
+              /** 0 si jamais revendu. */
+              sold_time_s: z.number().int().nullish(),
+            }),
+          )
+          .nullish(),
+        /** Relevés périodiques ; le dernier correspond à la fin de la partie. */
+        stats: z
+          .array(
+            z.object({
+              time_stamp_s: z.number().int().nullish(),
+              player_damage: z.number().nullish(),
+              player_damage_taken: z.number().nullish(),
+              boss_damage: z.number().nullish(),
+              creep_damage: z.number().nullish(),
+              neutral_damage: z.number().nullish(),
+              player_healing: z.number().nullish(),
+              self_healing: z.number().nullish(),
+              teammate_healing: z.number().nullish(),
+              damage_mitigated: z.number().nullish(),
+              hero_bullets_hit: z.number().nullish(),
+              hero_bullets_hit_crit: z.number().nullish(),
+              shots_hit: z.number().nullish(),
+              shots_missed: z.number().nullish(),
+              headshot_kills: z.number().nullish(),
+              creep_kills: z.number().nullish(),
+              neutral_kills: z.number().nullish(),
+            }),
+          )
+          .nullish(),
       }),
     ),
   }),
@@ -175,3 +224,47 @@ export const rankedSeasonsSchema = z.array(
     ),
   }),
 );
+
+/**
+ * `GET /v1/assets/items` (≈ 6 Mo, 780 entrées) : objets de boutique (`upgrade`), capacités
+ * (`ability`) et armes (`weapon`). Seuls les champs utiles sont conservés.
+ */
+export const itemAssetSchema = z.object({
+  id: z.number().int().nonnegative(),
+  class_name: z.string(),
+  name: z.string().nullish(),
+  type: z.string().nullish(),
+  item_slot_type: z.string().nullish(),
+  item_tier: z.number().int().nullish(),
+  cost: z.number().int().nullish(),
+  shopable: z.boolean().nullish(),
+  disabled: z.boolean().nullish(),
+  is_active_item: z.boolean().nullish(),
+  hero: z.number().int().nullish(),
+  heroes: z.array(z.number().int()).nullish(),
+  image: z.string().nullish(),
+  image_webp: z.string().nullish(),
+  shop_image: z.string().nullish(),
+  shop_image_webp: z.string().nullish(),
+  /** Objets dont celui-ci est l'amélioration (identifiants de classe). */
+  component_items: z.array(z.string()).nullish(),
+});
+export const itemAssetsSchema = z.array(itemAssetSchema);
+export type RawItemAsset = z.infer<typeof itemAssetSchema>;
+
+/** `GET /v1/assets/client-versions` : versions du client connues (entiers croissants). */
+export const clientVersionsSchema = z.array(z.number().int().nonnegative());
+
+/**
+ * `GET /v1/players/{id}/mate-stats` et `/enemy-stats` : `wins` = victoires du joueur DEMANDÉ
+ * (vérifié sur l'historique : 137 entrées sur 137). La liste des parties n'est pas conservée.
+ */
+export const relationStatsSchema = z.array(
+  z.object({
+    mate_id: z.number().int().nonnegative().nullish(),
+    enemy_id: z.number().int().nonnegative().nullish(),
+    wins: z.number().int().nonnegative(),
+    matches_played: z.number().int().nonnegative(),
+  }),
+);
+export type RawRelationStats = z.infer<typeof relationStatsSchema>;
