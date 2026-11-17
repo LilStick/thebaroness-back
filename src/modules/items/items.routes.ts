@@ -22,6 +22,17 @@ const listQuerySchema = z.object({
   clientVersion,
 });
 
+/** Filtres des agrégats d'items (mode de jeu normal). */
+export const analyticsQuerySchema = z.object({
+  period: z.enum(['7d', '30d'], 'period : 7d ou 30d').default('30d'),
+  heroId: z.coerce
+    .number('heroId : entier positif attendu')
+    .int('heroId : entier positif attendu')
+    .positive('heroId : entier positif attendu')
+    .optional(),
+  matchMode: z.enum(['ranked', 'unranked'], 'matchMode : ranked ou unranked').optional(),
+});
+
 const itemIdSchema = z.coerce
   .number('itemId : identifiant d’item invalide')
   .int('itemId : identifiant d’item invalide')
@@ -40,6 +51,16 @@ export function createItemsRouter(items: ItemsService): Router {
         shopable: shopable === undefined ? undefined : shopable === 'true',
       }),
     );
+  });
+
+  // Statistiques d'utilisation de tous les items (avant `/:itemId`).
+  router.get('/stats', async (req, res) => {
+    res.json(await items.stats(parse(analyticsQuerySchema, req.query)));
+  });
+
+  router.get('/:itemId/stats', async (req, res) => {
+    const itemId = parse(itemIdSchema, req.params.itemId);
+    res.json(await items.itemStats(itemId, parse(analyticsQuerySchema, req.query)));
   });
 
   router.get('/:itemId', async (req, res) => {

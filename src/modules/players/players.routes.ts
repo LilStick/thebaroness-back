@@ -9,6 +9,7 @@ import {
   overviewQuerySchema,
   rankHistoryQuerySchema,
   relationshipsQuerySchema,
+  trendsQuerySchema,
 } from './profile-stats';
 
 const searchQuerySchema = z.object({
@@ -64,6 +65,12 @@ export function createPlayersRouter(players: PlayersService): Router {
   router.get('/:steamId/relationships', async (req, res) => {
     const steamId = parse(steamIdSchema, req.params.steamId);
     res.json(await players.relationships(steamId, parse(relationshipsQuerySchema, req.query)));
+  });
+
+  // Tendances : N dernières parties contre les N précédentes (défaut 20).
+  router.get('/:steamId/trends', async (req, res) => {
+    const steamId = parse(steamIdSchema, req.params.steamId);
+    res.json(await players.trends(steamId, parse(trendsQuerySchema, req.query)));
   });
 
   // Activité par jour UTC (heatmap), 12 semaines par défaut.
