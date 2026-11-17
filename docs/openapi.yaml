@@ -1,9 +1,9 @@
-# Généré depuis src/docs/openapi.ts (v1.8.0) par `npm run openapi`.
+# Généré depuis src/docs/openapi.ts (v1.9.0) par `npm run openapi`.
 # Ne pas modifier à la main.
 openapi: 3.1.0
 info:
   title: thebaroness API
-  version: 1.8.0
+  version: 1.9.0
   description: "API du tracker de statistiques Deadlock. Les statistiques proviennent de Deadlock API (api.deadlock-api.com, source communautaire indépendante de Valve) ; l'espace privé est stocké dans MongoDB. Erreurs : `{ \"error\": { \"code\", \"message\" } }`. Inconnu = `null`, jamais 0."
 servers:
   - url: /api
@@ -229,10 +229,54 @@ paths:
             default: 20
         - name: cursor
           in: query
-          description: Jeton opaque `nextCursor` de la page précédente, à transmettre tel quel.
+          description: "Jeton opaque `nextCursor` de la page précédente, à transmettre tel quel avec les MÊMES filtres. Un curseur obtenu avec d’autres filtres (ou sans filtre) donne 400 : recommencer sans curseur."
           schema:
             type: string
             maxLength: 128
+        - name: period
+          in: query
+          description: "`7d` et `30d` : fenêtre glissante UTC depuis l’instant de la requête. `season` : depuis le début de la saison classée courante (source Deadlock API) ; si inconnu, aucune borne et `meta.isPartial`. Absent : tout l’historique (comportement v1.8)."
+          schema:
+            type: string
+            enum:
+              - 7d
+              - 30d
+              - season
+        - name: gameMode
+          in: query
+          description: "Mode de jeu (axe indépendant de `matchMode`) : `normal` inclut classées et non classées. Une partie au mode inconnu n’est retenue que sous `all`."
+          schema:
+            type: string
+            enum:
+              - all
+              - normal
+              - street_brawl
+            default: all
+        - name: matchMode
+          in: query
+          description: Type de partie. Une partie au type inconnu n’est retenue que sous `all`.
+          schema:
+            type: string
+            enum:
+              - all
+              - ranked
+              - unranked
+            default: all
+        - name: heroId
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+        - name: outcome
+          in: query
+          schema:
+            type: string
+            enum:
+              - all
+              - win
+              - loss
+            default: all
+      description: "Sans filtre : comportement v1.8 (tout l’historique). Avec filtres : sélection sur TOUT l’historique en cache, puis tri (`playedAt` décroissant, puis `matchId` décroissant) et pagination. 0 résultat : `items: []`."
       responses:
         "200":
           description: Page de parties
@@ -492,12 +536,12 @@ paths:
           $ref: "#/components/responses/UpstreamError"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
-  /players/{steamId}/heroes:
+  /players/{steamId}/overview:
     get:
       tags:
         - Joueurs
-      summary: Statistiques d'un joueur par héros
-      description: Sur les parties disponibles (même source que le profil), tri par parties.
+      summary: "Profil V2 : synthèse d’une période"
+      description: Agrégats d’une période exacte, combinaisons de modes observées, top 3 héros et couverture, calculés sur l’historique en cache (aucun appel par partie). Identité et rang actuel restent dans `GET /players/{steamId}`. Seules les parties gagnées ou perdues sont comptées.
       parameters:
         - name: steamId
           in: path
@@ -507,6 +551,97 @@ paths:
             type: string
             pattern: ^\d{17}$
           example: "76561198957316510"
+        - name: period
+          in: query
+          description: "`7d` et `30d` : fenêtre glissante UTC depuis l’instant de la requête. `season` : depuis le début de la saison classée courante (source Deadlock API) ; si inconnu, aucune borne et `meta.isPartial`."
+          schema:
+            type: string
+            enum:
+              - 7d
+              - 30d
+              - season
+            default: 30d
+        - name: gameMode
+          in: query
+          description: "Mode de jeu (axe indépendant de `matchMode`) : `normal` inclut classées et non classées. Une partie au mode inconnu n’est retenue que sous `all`."
+          schema:
+            type: string
+            enum:
+              - all
+              - normal
+              - street_brawl
+            default: all
+        - name: matchMode
+          in: query
+          description: Type de partie. Une partie au type inconnu n’est retenue que sous `all`.
+          schema:
+            type: string
+            enum:
+              - all
+              - ranked
+              - unranked
+            default: all
+      responses:
+        "200":
+          description: Synthèse
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlayerOverview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /players/{steamId}/heroes:
+    get:
+      tags:
+        - Joueurs
+      summary: Statistiques d'un joueur par héros
+      description: Sur les parties disponibles (même source que le profil), tri par parties décroissant puis `heroId`. Filtres optionnels ; sans filtre, tout l’historique (v1.8).
+      parameters:
+        - name: steamId
+          in: path
+          required: true
+          description: SteamID64 (17 chiffres), toujours transmis en chaîne.
+          schema:
+            type: string
+            pattern: ^\d{17}$
+          example: "76561198957316510"
+        - name: period
+          in: query
+          description: "`7d` et `30d` : fenêtre glissante UTC depuis l’instant de la requête. `season` : depuis le début de la saison classée courante (source Deadlock API) ; si inconnu, aucune borne et `meta.isPartial`. Absent : tout l’historique (comportement v1.8)."
+          schema:
+            type: string
+            enum:
+              - 7d
+              - 30d
+              - season
+        - name: gameMode
+          in: query
+          description: "Mode de jeu (axe indépendant de `matchMode`) : `normal` inclut classées et non classées. Une partie au mode inconnu n’est retenue que sous `all`."
+          schema:
+            type: string
+            enum:
+              - all
+              - normal
+              - street_brawl
+            default: all
+        - name: matchMode
+          in: query
+          description: Type de partie. Une partie au type inconnu n’est retenue que sous `all`.
+          schema:
+            type: string
+            enum:
+              - all
+              - ranked
+              - unranked
+            default: all
       responses:
         "200":
           description: Héros joués
@@ -516,12 +651,15 @@ paths:
                 type: object
                 required:
                   - items
+                  - appliedFilters
                   - meta
                 properties:
                   items:
                     type: array
                     items:
                       $ref: "#/components/schemas/PlayerHeroStat"
+                  appliedFilters:
+                    $ref: "#/components/schemas/AppliedFilters"
                   meta:
                     $ref: "#/components/schemas/DataMeta"
         "400":
@@ -1826,8 +1964,12 @@ components:
         - heroImageUrl
         - matches
         - wins
+        - losses
         - winRate
         - kda
+        - kdaSampleSize
+        - avgNetWorthPerMinute
+        - netWorthPerMinuteSampleSize
       properties:
         heroId:
           type: integer
@@ -1841,6 +1983,8 @@ components:
           type: integer
         wins:
           type: integer
+        losses:
+          type: integer
         winRate:
           type:
             - number
@@ -1849,6 +1993,291 @@ components:
           type:
             - number
             - "null"
+          description: "`(ΣK + ΣA) / max(ΣD, 1)` sur les parties où K, D et A sont connus."
+        kdaSampleSize:
+          type: integer
+          minimum: 0
+          description: Nombre de parties utilisées pour le KDA.
+        avgNetWorthPerMinute:
+          type:
+            - number
+            - "null"
+          description: Moyenne des ratios par partie `netWorth / (durationSeconds / 60)` (net worth connu, durée > 0).
+        netWorthPerMinuteSampleSize:
+          type: integer
+          minimum: 0
+          description: Nombre de parties utilisées pour le net worth par minute.
+    AppliedFilters:
+      type: object
+      required:
+        - period
+        - gameMode
+        - matchMode
+        - heroId
+        - outcome
+      description: "Filtres effectivement appliqués (`null` : non filtré)."
+      properties:
+        period:
+          type:
+            - string
+            - "null"
+          enum:
+            - 7d
+            - 30d
+            - season
+            - null
+        gameMode:
+          type: string
+          enum:
+            - all
+            - normal
+            - street_brawl
+        matchMode:
+          type: string
+          enum:
+            - all
+            - ranked
+            - unranked
+        heroId:
+          type:
+            - integer
+            - "null"
+        outcome:
+          type: string
+          enum:
+            - all
+            - win
+            - loss
+    PlayerOverview:
+      type: object
+      required:
+        - filters
+        - summary
+        - modes
+        - topHeroes
+        - coverage
+        - meta
+      properties:
+        filters:
+          type: object
+          required:
+            - period
+            - gameMode
+            - matchMode
+          properties:
+            period:
+              type: string
+              enum:
+                - 7d
+                - 30d
+                - season
+            gameMode:
+              type: string
+              enum:
+                - all
+                - normal
+                - street_brawl
+            matchMode:
+              type: string
+              enum:
+                - all
+                - ranked
+                - unranked
+        summary:
+          type: object
+          required:
+            - matches
+            - wins
+            - losses
+            - winRate
+            - kills
+            - deaths
+            - assists
+            - kda
+            - kdaSampleSize
+            - avgNetWorthPerMinute
+            - netWorthPerMinuteSampleSize
+            - avgDurationSeconds
+            - durationSampleSize
+            - lastMatchAt
+          properties:
+            matches:
+              type: integer
+            wins:
+              type: integer
+            losses:
+              type: integer
+            winRate:
+              type:
+                - number
+                - "null"
+              description: null si aucune partie
+            kills:
+              type:
+                - integer
+                - "null"
+              description: Total sur les parties complètes (K, D, A connus)
+            deaths:
+              type:
+                - integer
+                - "null"
+            assists:
+              type:
+                - integer
+                - "null"
+            kda:
+              type:
+                - number
+                - "null"
+              description: "`(kills + assists) / max(deaths, 1)` sur ce même sous-ensemble, 2 décimales."
+            kdaSampleSize:
+              type: integer
+              minimum: 0
+              description: Nombre de parties utilisées pour kills, deaths, assists et kda.
+            avgNetWorthPerMinute:
+              type:
+                - number
+                - "null"
+              description: Moyenne des ratios par partie `netWorth / (durationSeconds / 60)`, et non total / total.
+            netWorthPerMinuteSampleSize:
+              type: integer
+              minimum: 0
+              description: Nombre de parties utilisées pour le net worth par minute.
+            avgDurationSeconds:
+              type:
+                - integer
+                - "null"
+            durationSampleSize:
+              type: integer
+              minimum: 0
+              description: Nombre de parties utilisées pour la durée moyenne.
+            lastMatchAt:
+              type:
+                - string
+                - "null"
+              format: date-time
+        modes:
+          type: array
+          description: Combinaisons observées (modes connus), par volume décroissant. Somme des `matches` + `coverage.unknownModeMatches` = `summary.matches`.
+          items:
+            type: object
+            required:
+              - gameMode
+              - matchMode
+              - matches
+              - wins
+              - losses
+              - winRate
+            properties:
+              gameMode:
+                type: string
+              matchMode:
+                type: string
+              matches:
+                type: integer
+              wins:
+                type: integer
+              losses:
+                type: integer
+              winRate:
+                type: number
+        topHeroes:
+          type: array
+          maxItems: 3
+          items:
+            type: object
+            required:
+              - heroId
+              - heroName
+              - heroImageUrl
+              - matches
+              - wins
+              - losses
+              - winRate
+              - kda
+              - kdaSampleSize
+            properties:
+              heroId:
+                type: integer
+              heroName:
+                type: string
+              heroImageUrl:
+                type:
+                  - string
+                  - "null"
+              matches:
+                type: integer
+              wins:
+                type: integer
+              losses:
+                type: integer
+              winRate:
+                type:
+                  - number
+                  - "null"
+              kda:
+                type:
+                  - number
+                  - "null"
+              kdaSampleSize:
+                type: integer
+                minimum: 0
+                description: Nombre de parties utilisées pour le KDA.
+        coverage:
+          type: object
+          required:
+            - requestedFrom
+            - requestedTo
+            - observedFrom
+            - observedTo
+            - includedMatches
+            - excludedUnknownMode
+            - unknownModeMatches
+            - isPartial
+            - notes
+          properties:
+            requestedFrom:
+              type:
+                - string
+                - "null"
+              format: date-time
+              description: null si `season` et début de saison inconnu
+            requestedTo:
+              type: string
+              format: date-time
+            observedFrom:
+              type:
+                - string
+                - "null"
+              format: date-time
+              description: Première partie retenue (null si aucune)
+            observedTo:
+              type:
+                - string
+                - "null"
+              format: date-time
+            includedMatches:
+              type: integer
+            excludedUnknownMode:
+              type: integer
+              description: Parties écartées car leur mode est inconnu alors qu’un mode précis est demandé
+            unknownModeMatches:
+              type: integer
+              description: Parties retenues (filtre `all`) au mode inconnu, absentes de `modes`
+            isPartial:
+              type: boolean
+              description: true si la période n’a pas pu être appliquée (début de saison inconnu)
+            notes:
+              type: array
+              items:
+                type: string
+                enum:
+                  - season_start_unknown
+                  - unknown_mode_excluded
+                  - unknown_mode_included
+                  - history_stale
+        meta:
+          $ref: "#/components/schemas/DataMeta"
     MatchSummary:
       type: object
       required:
@@ -1938,6 +2367,7 @@ components:
       required:
         - items
         - nextCursor
+        - appliedFilters
         - meta
       properties:
         items:
@@ -1948,6 +2378,8 @@ components:
           type:
             - string
             - "null"
+        appliedFilters:
+          $ref: "#/components/schemas/AppliedFilters"
         meta:
           $ref: "#/components/schemas/DataMeta"
     TrackedPlayer:

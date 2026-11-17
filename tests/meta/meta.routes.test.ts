@@ -443,8 +443,13 @@ describe('Routes P1 (classement, stats méta, partie, héros d’un joueur)', ()
           heroImageUrl: `${ASSET}/72.webp`,
           matches: 3,
           wins: 2,
+          // Ajouts v1.9.0 (valeurs v1.8 inchangées).
+          losses: 1,
           winRate: 66.67,
           kda: 5.29,
+          kdaSampleSize: 3,
+          avgNetWorthPerMinute: 1000,
+          netWorthPerMinuteSampleSize: 3,
         },
         {
           heroId: 6,
@@ -452,8 +457,12 @@ describe('Routes P1 (classement, stats méta, partie, héros d’un joueur)', ()
           heroImageUrl: `${ASSET}/6.webp`,
           matches: 1,
           wins: 1,
+          losses: 0,
           winRate: 100,
           kda: 2,
+          kdaSampleSize: 1,
+          avgNetWorthPerMinute: 1000,
+          netWorthPerMinuteSampleSize: 1,
         },
       ]);
     });
