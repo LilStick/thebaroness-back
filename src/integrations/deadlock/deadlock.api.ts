@@ -34,6 +34,14 @@ import {
 } from './deadlock.schemas';
 
 /** Résumé de joueur normalisé (§19.4 A) : aucun champ brut de Deadlock API ne sort d'ici. */
+/** Intervalle de saison classée (epoch s). `endAt` null : saison en cours sans fin connue. */
+export interface RankedSeason {
+  season: number;
+  name: string | null;
+  startAt: number;
+  endAt: number | null;
+}
+
 export interface PlayerSummary {
   steamId: string;
   accountId: number;
@@ -225,6 +233,31 @@ export function createDeadlockApi(client: DeadlockClient) {
     },
 
     /** Début de la saison classée en cours (epoch s), `null` si inconnu. */
+    /**
+     * Saisons classées (`/v1/assets/ranked-seasons`), une entrée par intervalle, triées par début.
+     * Les rangs de deux saisons ne sont pas comparables : au passage de Beta Season 1 à 2
+     * (05/11/2026 20:00 UTC), la source a recompressé les badges (Eternus → Phantom/Oracle,
+     * Arcanist → Ritualist/Emissary) et changé le barème (300 → 350 points).
+     */
+    async getRankedSeasons(): Promise<RankedSeason[]> {
+      const seasons =
+        (await client.get('/v1/assets/ranked-seasons', {}, rankedSeasonsSchema)) ?? [];
+      return (
+        seasons
+          .flatMap((season) =>
+            season.intervals.map((i) => ({
+              interval: i.interval ?? null,
+              name: season.name ?? null,
+              startAt: i.start_timestamp,
+              endAt: i.end_timestamp ?? null,
+            })),
+          )
+          .sort((a, b) => a.startAt - b.startAt)
+          // Numéro de la source (`interval`), sinon rang chronologique global (jamais par saison).
+          .map(({ interval, ...rest }, index) => ({ season: interval ?? index + 1, ...rest }))
+      );
+    },
+
     async getCurrentSeasonStart(now = Date.now() / 1000): Promise<number | null> {
       const seasons =
         (await client.get('/v1/assets/ranked-seasons', {}, rankedSeasonsSchema)) ?? [];

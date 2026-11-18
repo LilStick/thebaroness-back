@@ -71,3 +71,29 @@ export function rankFromBadge(badge: number | null | undefined, tiers: RankTier[
 /** Score comparable entre joueurs : `tier * 6 + subrank` (1 à 72). */
 export const rankScore = (badge: number): number =>
   Math.floor(badge / 10) * SUBRANKS + (badge % 10);
+
+/** Saison classée d'un instant (epoch s), ou `null` hors de toute saison connue. */
+export function seasonAt(
+  seconds: number,
+  seasons: ReadonlyArray<{ season: number; startAt: number; endAt: number | null }>,
+): number | null {
+  const found = seasons.find(
+    (s) => s.startAt <= seconds && (s.endAt === null || seconds < s.endAt),
+  );
+  return found?.season ?? null;
+}
+
+/**
+ * Progression de rang comparable : dernier − premier score parmi les points de la même saison
+ * que le dernier point (les rangs de deux saisons ne se comparent pas). Sans saisons connues,
+ * tous les points sont considérés. `null` sous 2 points comparables.
+ */
+export function seasonRankDelta(
+  points: ReadonlyArray<{ score: number; season: number | null }>,
+): number | null {
+  const last = points.at(-1);
+  if (!last) return null;
+  const segment = points.filter((p) => p.season === last.season);
+  const first = segment[0];
+  return segment.length >= 2 && first ? last.score - first.score : null;
+}

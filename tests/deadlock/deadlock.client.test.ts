@@ -104,6 +104,23 @@ describe('DeadlockClient', () => {
     expect(upstream.calls).toHaveLength(1);
   });
 
+  it('cause de l’indisponibilité : quota, délai dépassé, réseau, panne (v1.15.0)', async () => {
+    upstream
+      .on(/quota$/, { status: 429, headers: { 'retry-after': '30' } })
+      .on(/slow$/, { delayMs: 200, body: [] })
+      .on(/down$/, { networkError: true })
+      .on(/outage$/, { status: 503 });
+    const c = client({ timeoutMs: 50 });
+    const reasonOf = (path: string) =>
+      c.get(path, {}, schema).catch((e: { upstreamReason?: string }) => e.upstreamReason);
+    expect(await reasonOf('/v1/quota')).toBe('rate_limited');
+    // Route bloquée après un 429 : même cause.
+    expect(await reasonOf('/v1/quota')).toBe('rate_limited');
+    expect(await reasonOf('/v1/slow')).toBe('timeout');
+    expect(await reasonOf('/v1/down')).toBe('unreachable');
+    expect(await reasonOf('/v1/outage')).toBe('unavailable');
+  });
+
   it('Retry-After bloque seulement la route concernée (quotas par route)', async () => {
     upstream
       .on(/\/v1\/players\/rank$/, { status: 429, headers: { 'retry-after': '30' } })

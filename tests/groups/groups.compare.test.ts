@@ -189,11 +189,26 @@ describe('GET /api/groups/:id/compare', () => {
         at: expect.any(String),
         score: Math.floor(badge / 10) * 6 + (badge % 10),
         badge,
+        // v1.15.0 : saison classée de la source (2e intervalle, le seul dans la fenêtre simulée).
+        season: 2,
       })),
       // Ajouts v1.12.0 : score actuel (92 → 9*6+2), progression 92 − 85 en score, échantillon.
       currentRankScore: 56,
       rankDelta: 3,
       kdaSampleSize: 7,
+      // Ajouts v1.15.0 : filtres « all », fenêtre précédente de 30 jours (1 partie : écarts
+      // de ratio null sous 5 parties de chaque côté).
+      excludedUnknownModeMatches: 0,
+      previous: {
+        from: expect.any(String),
+        to: expect.any(String),
+        matches: 1,
+        wins: 1,
+        winRate: 100,
+        kda: 30,
+        kdaSampleSize: 1,
+      },
+      deltaVsPrevious: { matches: 6, winRate: null, kda: null },
     });
     // Ordre chronologique.
     const times = a.rankHistory.map((p: { at: string }) => Date.parse(p.at));
@@ -213,7 +228,13 @@ describe('GET /api/groups/:id/compare', () => {
       currentRankScore: null,
       rankDelta: null,
       kdaSampleSize: 0,
+      previous: { matches: 0, winRate: null, kda: null },
+      deltaVsPrevious: { matches: 0, winRate: null, kda: null },
     });
+    // v1.15.0 : filtres appliqués, aucun membre indisponible, pas de paires sans `include`.
+    expect(res.body.appliedFilters).toEqual({ period: '30d', gameMode: 'all', matchMode: 'all' });
+    expect(res.body.unavailable).toEqual([]);
+    expect(res.body).not.toHaveProperty('pairs');
     // Highlights calculés par le back : forme stable, un membre sans parties n'est jamais primé.
     const highlights = Object.fromEntries(
       res.body.highlights.map((h: { key: string }) => [h.key, h]),

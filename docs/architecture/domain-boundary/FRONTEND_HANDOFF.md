@@ -261,6 +261,120 @@ Gain mesuré : 0,04 s au lieu de 0,09 s, et une requête HTTP au lieu de 9.
 
 **`include=summary` (v1.14.0)** : `summary.netWorthPerMinute: number | null` a été ajouté. Il suit la même formule que `series[].netWorthPerMinute`.
 
+## 6 quater. Groupes (v1.15.0, Sprint 3)
+
+Tout est additif. Sans les nouveaux paramètres, les réponses restent celles de la v1.14, avec une exception : `rankDelta` est corrigé (voir 4).
+
+### 1. `GET /groups?include=members`
+
+```ts
+// sans include : { items: Group[] } (inchangé)
+interface GroupsWithMembers {
+  items: Array<Group & { members: MemberIdentity[] }>; // members dans l'ordre de steamIds
+  membersCoverage: {
+    requested: number;
+    resolved: number;
+    fetched: number;
+    providerFailed: boolean;
+  };
+  meta: DataMeta; // isPartial si une identité n'est pas résolue
+}
+interface MemberIdentity {
+  steamId: string;
+  displayName: string; // SteamID64 si resolved === false
+  avatarUrl: string | null;
+  resolved: boolean;
+}
+```
+
+Pour `GroupsPage`, il suffit d'ajouter `include=members` et d'afficher `members.slice(0, 3)`. Le cas `resolved: false` correspond à un profil non résolu, avec le SteamID comme pseudo.
+
+### 2. `GET /groups/{id}/compare` et `POST /groups/{id}/refresh`
+
+Nouveaux paramètres :
+
+- `gameMode=all|normal|street_brawl` (défaut `all`) ;
+- `matchMode=all|ranked|unranked` (défaut `all`) ;
+- `include=pairs`.
+
+```ts
+// réponse gagne :
+appliedFilters: { period; gameMode; matchMode };
+unavailable: Array<{ steamId: string; reason: 'not_found' | 'rate_limited' | 'timeout' | 'provider_error' | 'unknown' }>;
+pairs?: GroupPairs;                    // seulement avec include=pairs
+// chaque membre gagne :
+excludedUnknownModeMatches: number;
+previous: { from: string; to: string; matches: number; wins: number; winRate: number | null; kda: number | null; kdaSampleSize: number } | null; // null pour season
+deltaVsPrevious: { matches: number; winRate: number | null; kda: number | null } | null;               // ratios null sous 5 parties de chaque côté
+rankHistory: Array<{ at: string; score: number; badge: number; season: number | null }>;
+// methodology gagne :
+rankDeltaScope: 'latest_season_in_period';
+seasons: Array<{ season: number; name: string | null; startedAt: string; endedAt: string | null }>;
+seasonBoundariesKnown: boolean;
+previousPeriod: { from: string; to: string } | null;
+```
+
+```ts
+interface GroupPairs {
+  scope: {
+    relation: 'same_team';
+    partyConfirmed: false;
+    basis: 'match_history_intersection';
+    period;
+    gameMode;
+    matchMode;
+  };
+  items: Array<{
+    steamIds: [string, string]; // ordre du groupe
+    together: {
+      matches: number;
+      wins: number;
+      losses: number;
+      winRate: number | null;
+      lastPlayedAt: string | null;
+    };
+    against: { matches: number; firstWins: number }; // firstWins = victoires de steamIds[0]
+  }>; // uniquement les paires avec une partie commune ; tri : together.matches desc
+  coverage: {
+    membersIncluded: number;
+    membersMissing: string[];
+    pairsEvaluated: number;
+    pairsWithCommonMatches: number;
+  };
+}
+```
+
+**Section « Jouer ensemble »**
+
+- Formuler « dans la même équipe », **jamais « en escouade »** : `partyConfirmed` vaut toujours false, et la source ne connaît pas les escouades.
+- Les chiffres sont exacts sur les parties scorées. Une paire absente de `items` n'a aucune partie commune scorée dans la sélection, à condition que ses deux membres soient présents. Si un membre est dans `coverage.membersMissing`, ses paires n'ont pas été évaluées : afficher « non évalué », pas 0.
+- Le calcul suit `period`, `gameMode` et `matchMode` : afficher `appliedFilters`.
+
+**Autres consignes**
+
+- **Méthode et limites** : remplacer « modes de jeu confondus » par le libellé tiré de `appliedFilters`.
+- **Membres absents** : lire `unavailable`.
+  - `not_found` : « profil introuvable » ;
+  - `rate_limited` ou `timeout` : « réessayez dans un instant » ;
+  - `provider_error` ou `unknown` : « données indisponibles ».
+- **Période précédente** : afficher `deltaVsPrevious` tel quel, sans recalculer côté front. Afficher « n/d » si la valeur est null.
+
+### 3. `GET /players/{id}/rank-history`
+
+Ajouts :
+
+- `seasons: RankedSeason[]` ;
+- `points[].season: number | null` ;
+- les notes `spans_multiple_seasons` et `season_boundaries_unknown`.
+
+### 4. Chute des rangs : cause et consigne
+
+La cause est le changement de saison du **05/11/2026 à 20:00 UTC** (Beta Season 1 vers Beta Season 2). La source a recompressé tous les badges : les Eternus sont redescendus vers Phantom, les Arcanist sont montés vers Ritualist. Voir `docs/architecture/rank-season-change.md`.
+
+**Courbes de rang** : couper la ligne à chaque changement de `season`, en segments séparés avec un repère de saison issu de `methodology.seasons` ou de `seasons`. Ne jamais relier deux saisons.
+
+`rankDelta` et le highlight `biggest_climb` portent désormais sur la dernière saison de la période.
+
 ## 7. Inchangé
 
 - `/players/search` : pseudo et avatar, sans rang (ajouter le rang coûterait 2 appels par résultat).

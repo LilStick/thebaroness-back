@@ -1,3 +1,4 @@
+import type { RankedSeason } from '../../integrations/deadlock/deadlock.api';
 import { combineMeta } from '../../shared/data-meta';
 import { cached, type Cached } from '../../database/api-cache';
 import type { DeadlockApi } from '../../integrations/deadlock/deadlock.api';
@@ -89,6 +90,14 @@ export function createCatalogService(deadlock: DeadlockApi) {
     },
 
     ranks: rankCatalog,
+
+    /** Saisons classées connues de la source (cache 24 h). */
+    async rankedSeasons(): Promise<RankedSeason[]> {
+      const { data } = await cached('catalog:ranked-seasons:v1', { ttlMs: CATALOG_TTL }, () =>
+        deadlock.getRankedSeasons(),
+      );
+      return data;
+    },
 
     /** Début de la saison classée courante (epoch s) ou `null` (cache 24 h). */
     async seasonStart(): Promise<number | null> {

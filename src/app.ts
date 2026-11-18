@@ -129,7 +129,7 @@ export function createApp({
   api.use('/items', createItemsRouter(items));
   api.use(createBuildsRouter(builds, catalog));
   api.use('/players', createPlayersRouter(players, meta));
-  api.use('/groups', createGroupRouter(auth, createGroupCompareService(players, catalog)));
+  api.use('/groups', createGroupRouter(auth, createGroupCompareService(players, catalog), players));
 
   app.use('/api', api);
   app.use(notFoundHandler);

@@ -1,5 +1,5 @@
 import { combineMeta, type DataMeta } from '../../shared/data-meta';
-import { kda, percent, round2 } from '../../shared/metrics';
+import { kda, mapLimit, percent, round2 } from '../../shared/metrics';
 import { HERO_META_PERIOD, loadHeroMetaTable } from '../meta/meta.service';
 import {
   type ActivityQuery,
@@ -29,7 +29,7 @@ import {
   toGameMode,
   toMatchMode,
 } from '../../integrations/deadlock/game-modes';
-import { cached, type Cached } from '../../database/api-cache';
+import { ApiCacheModel, cached, type Cached } from '../../database/api-cache';
 import type {
   DeadlockApi,
   PlayerSummary,
@@ -39,7 +39,7 @@ import type { RawMatchHistoryEntry } from '../../integrations/deadlock/deadlock.
 import { invalidInput, notFound } from '../../shared/errors';
 import { accountIdToSteamId, isSteamId64, steamIdToAccountId } from '../../shared/schemas';
 import type { CatalogService } from '../catalog/catalog.service';
-import { rankFromBadge, rankScore, UNRANKED, type PlayerRank } from '../catalog/ranks';
+import { rankFromBadge, rankScore, seasonAt, UNRANKED, type PlayerRank } from '../catalog/ranks';
 
 /** TTL initiaux (§9.2) : choix du projet, pas des garanties du fournisseur. */
 const TTL = {
@@ -48,6 +48,8 @@ const TTL = {
   history: 3 * 60_000,
   /** Coéquipiers et adversaires : agrégats lourds côté source. */
   relations: 10 * 60_000,
+  /** Pseudo et avatar changent rarement : 6 h (comme les avatars du classement). */
+  identity: 6 * 3600_000,
 } as const;
 
 const SEARCH_LIMIT = 20;
@@ -70,6 +72,27 @@ interface RelationsSnapshot {
 }
 /** Héros mis en avant par `/overview`. */
 const TOP_HEROES = 3;
+
+/** Comptes par appel groupé `/v1/players/steam` (même ordre de grandeur que le classement). */
+export const IDENTITY_BATCH = 100;
+
+/** Identité publique d'un joueur dans une liste. `resolved: false` : repli sur le SteamID64. */
+export interface Identity {
+  steamId: string;
+  displayName: string;
+  avatarUrl: string | null;
+  resolved: boolean;
+}
+
+const toIdentity = (
+  steamId: string,
+  payload: { displayName?: string; avatarUrl?: string | null } | null,
+): Identity => ({
+  steamId,
+  displayName: payload?.displayName || steamId,
+  avatarUrl: payload?.avatarUrl ?? null,
+  resolved: Boolean(payload?.displayName),
+});
 
 /** Taille de la « forme » des cartes joueur (dernières parties scorées). */
 export const FORM_SIZE = 10;
@@ -464,19 +487,32 @@ export function createPlayersService(deadlock: DeadlockApi, catalog: CatalogServ
      * plus récent. Score = `tier * 6 + subrank` (même échelle que la comparaison de groupe).
      */
     async rankHistory(steamId: string, period: ProfilePeriod) {
-      const [, history, ranks, seasonStart] = await Promise.all([
+      const [, history, ranks, seasonStart, seasons] = await Promise.all([
         requireProfile(steamId),
         historyOf(steamIdToAccountId(steamId)),
         catalog.ranks().catch(() => null),
         period === 'season' ? catalog.seasonStart().catch(() => null) : null,
+        catalog.rankedSeasons().catch(() => null),
       ]);
       const window = periodWindow(period, Date.now(), seasonStart);
       const { matches } = selectMatches(history.data, {}, window);
       const { points, rankedMatches, missingBadge } = rankPoints(matches);
       const iso = (seconds: number) => new Date(seconds * 1000).toISOString();
+      const pointSeasons = points.map((p) => (seasons ? seasonAt(p.at, seasons) : null));
+      const seen = new Set(pointSeasons.filter((x): x is number => x !== null));
+      const spansSeasons = seen.size > 1;
       return {
         period,
-        points: points.map((p) => {
+        // v1.15.0 : saisons couvertes par les points (les rangs de deux saisons ne se comparent pas).
+        seasons: (seasons ?? [])
+          .filter((s) => seen.has(s.season))
+          .map((s) => ({
+            season: s.season,
+            name: s.name,
+            startedAt: iso(s.startAt),
+            endedAt: s.endAt === null ? null : iso(s.endAt),
+          })),
+        points: points.map((p, i) => {
           const rank = ranks ? rankFromBadge(p.badge, ranks.data) : null;
           return {
             at: iso(p.at),
@@ -488,6 +524,7 @@ export function createPlayersService(deadlock: DeadlockApi, catalog: CatalogServ
             name: rank?.name ?? null,
             imageUrl: rank?.imageUrl ?? null,
             outcome: p.win ? ('win' as const) : ('loss' as const),
+            season: pointSeasons[i] ?? null,
           };
         }),
         coverage: {
@@ -500,6 +537,8 @@ export function createPlayersService(deadlock: DeadlockApi, catalog: CatalogServ
           notes: [
             ...(window.seasonUnknown ? ['season_start_unknown'] : []),
             ...(missingBadge ? ['badge_missing_on_some_ranked_matches'] : []),
+            ...(spansSeasons ? ['spans_multiple_seasons'] : []),
+            ...(!seasons && points.length ? ['season_boundaries_unknown'] : []),
             ...(history.isStale ? ['history_stale'] : []),
           ],
         },
@@ -717,6 +756,117 @@ export function createPlayersService(deadlock: DeadlockApi, catalog: CatalogServ
         meta: meta(hasHistory ? [profile.value, history.value] : [profile.value], {
           isPartial: !hasHistory || (Boolean(badge) && ranks.status === 'rejected'),
         }),
+      };
+    },
+
+    /**
+     * Identités (pseudo, avatar) de nombreux joueurs, pour les listes (`GET /groups?include=members`).
+     * Une lecture Mongo pour toutes les copies (`identity:v1:<id>` et `profile:<id>`), puis un
+     * appel groupé `/v1/players/steam` par lot de {@link IDENTITY_BATCH} pour les manquants ; en
+     * cas d'échec de la source, repli sur une copie périmée, sinon identité non résolue.
+     */
+    async identities(steamIds: string[]) {
+      const ids = [...new Set(steamIds)];
+      const keyOf = (id: string) => `identity:v1:${steamIdToAccountId(id)}`;
+      const profileKeyOf = (id: string) => `profile:${steamIdToAccountId(id)}`;
+      const entries = ids.length
+        ? await ApiCacheModel.find(
+            { key: { $in: ids.flatMap((id) => [keyOf(id), profileKeyOf(id)]) } },
+            { key: 1, payload: 1, fetchedAt: 1, expiresAt: 1 },
+          )
+            .lean<
+              Array<{
+                key: string;
+                payload: { displayName?: string; avatarUrl?: string | null } | null;
+                fetchedAt: Date;
+                expiresAt: Date;
+              }>
+            >()
+            .exec()
+        : [];
+      const now = Date.now();
+      const byKey = new Map(entries.filter((e) => e.payload?.displayName).map((e) => [e.key, e]));
+      const members = new Map<string, Identity>();
+      const used: Array<{ fetchedAt: Date; isStale: boolean }> = [];
+      const stale = new Map<string, (typeof entries)[number]>();
+      for (const id of ids) {
+        const entry = [byKey.get(keyOf(id)), byKey.get(profileKeyOf(id))]
+          .filter((e) => e !== undefined)
+          .sort((a, b) => b.fetchedAt.getTime() - a.fetchedAt.getTime())[0];
+        if (!entry) continue;
+        if (entry.expiresAt.getTime() > now) {
+          members.set(id, toIdentity(id, entry.payload));
+          used.push({ fetchedAt: entry.fetchedAt, isStale: false });
+        } else stale.set(id, entry);
+      }
+
+      const missing = ids.filter((id) => !members.has(id));
+      let fetched = 0;
+      let failed = false;
+      if (missing.length) {
+        const chunks: string[][] = [];
+        for (let i = 0; i < missing.length; i += IDENTITY_BATCH) {
+          chunks.push(missing.slice(i, i + IDENTITY_BATCH));
+        }
+        const results = await mapLimit(chunks, 2, (chunk) =>
+          deadlock.getSteamProfiles(chunk.map(steamIdToAccountId)).catch(() => null),
+        );
+        const fetchedAt = new Date();
+        const writes = [];
+        for (const profiles of results) {
+          if (!profiles) {
+            failed = true;
+            continue;
+          }
+          for (const p of profiles) {
+            const id = accountIdToSteamId(p.accountId);
+            const payload = { displayName: p.displayName, avatarUrl: p.avatarUrl };
+            members.set(id, toIdentity(id, payload));
+            fetched++;
+            const expiresAt = new Date(fetchedAt.getTime() + TTL.identity);
+            writes.push({
+              updateOne: {
+                filter: { key: keyOf(id) },
+                update: {
+                  $set: {
+                    payload,
+                    fetchedAt,
+                    expiresAt,
+                    purgeAt: new Date(expiresAt.getTime() + 7 * 24 * 3600_000),
+                    source: 'deadlock-api',
+                  },
+                },
+                upsert: true,
+              },
+            });
+          }
+        }
+        if (writes.length) await ApiCacheModel.bulkWrite(writes, { ordered: false });
+        if (fetched) used.push({ fetchedAt, isStale: false });
+      }
+      // Source en échec : copie périmée plutôt que rien.
+      for (const [id, entry] of stale) {
+        if (members.has(id)) continue;
+        members.set(id, toIdentity(id, entry.payload));
+        used.push({ fetchedAt: entry.fetchedAt, isStale: true });
+      }
+      const resolved = ids.filter((id) => members.has(id)).length;
+      return {
+        members,
+        coverage: {
+          requested: ids.length,
+          resolved,
+          fetched,
+          providerFailed: failed,
+        },
+        meta: used.length
+          ? meta(used, { isPartial: resolved < ids.length })
+          : {
+              fetchedAt: new Date().toISOString(),
+              sourceUpdatedAt: null,
+              isStale: false,
+              isPartial: resolved < ids.length,
+            },
       };
     },
 

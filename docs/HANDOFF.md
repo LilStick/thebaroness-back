@@ -7,6 +7,14 @@ Dernière mise à jour : 18/11/2026 (voir `git log -- docs/HANDOFF.md` pour le S
 
 ## A lire en premier
 
+- **v1.15.0 (19/11/2026), Sprint 3 Groupes** : réponse à `docs/back-groups-sprint3-requests.md` du front.
+  - `GET /groups?include=members` ;
+  - `compare` : `gameMode`, `matchMode`, `include=pairs`, `unavailable`, `previous` et `deltaVsPrevious` ;
+  - **cause de la chute des rangs établie** : changement de saison de la source au 05/11/2026 20:00 UTC. `rankDelta` est corrigé et les points sont annotés par `season`.
+  - **Correction** : `sameParty` désigne « même équipe + amis Steam » (heuristique de la source), pas une escouade.
+
+  Détail : § 6 quater de `docs/architecture/domain-boundary/FRONTEND_HANDOFF.md`, et `docs/architecture/rank-season-change.md`.
+
 - **v1.14.0 (18/11/2026)** :
   - `GET /heroes/stats?heroIds=…` : méta de plusieurs héros en un appel. Pour l'accueil, cela remplace 7 à 9 appels `/heroes/:id/stats` ;
   - `summary.netWorthPerMinute` dans l'historique ;
@@ -477,7 +485,7 @@ Exemple réel (FunKa, Celeste, listes tronquées) :
 
 ### `GET /api/players/{steamId}/relationships`
 
-- Paramètres : `period` (absent = tout l'historique), `gameMode` `normal` (défaut) ou `street_brawl` (la source ne fait pas « tous modes »), `sameParty` (`true` : coéquipiers dans le même groupe, information de la source), `minMatches` (1 à 50, défaut 2), `limit` (1 à 50, défaut 10).
+- Paramètres : `period` (absent = tout l'historique), `gameMode` `normal` (défaut) ou `street_brawl` (la source ne fait pas « tous modes »), `sameParty` (`true` : même équipe **et** amis Steam au début de la partie, heuristique de la source ; ce n'est pas une escouade de matchmaking confirmée), `minMatches` (1 à 50, défaut 2), `limit` (1 à 50, défaut 10).
 - `wins` = victoires **du joueur demandé** dans les parties communes. À présenter comme « joués avec / contre », jamais comme amis Steam.
 - Une source en panne : sa liste vaut `null` et `meta.isPartial` ; les deux : 503. Cache 10 min (1 min si incomplet), borne basse arrondie à 10 min.
 
@@ -874,6 +882,13 @@ npm run dev             # proxy Vite /api vers http://localhost:3001
 Les routes catalogue et joueurs interrogent la vraie API Deadlock : prévoir une connexion internet. En cas de limitation par la source, les réponses passent en `isStale` ou `isPartial`, ou en 503 avec `Retry-After`.
 
 ## Journal des changements de contrat (du plus récent au plus ancien)
+
+- 19/11/2026 : **v1.15.0** (Sprint 3 Groupes) :
+  - `GET /groups?include=members` (`members`, `membersCoverage`, `meta`) ;
+  - `GET /groups/{id}/compare` et `POST /groups/{id}/refresh` gagnent `gameMode`, `matchMode` et `include=pairs`. Côté réponse : `appliedFilters`, `unavailable` et `pairs` ; par membre : `excludedUnknownModeMatches`, `previous`, `deltaVsPrevious` et `rankHistory[].season` ; `methodology` gagne `rankDeltaScope`, `seasons`, `seasonBoundariesKnown` et `previousPeriod` ;
+  - `GET /players/{id}/rank-history` gagne `seasons`, `points[].season` et deux notes.
+
+  Additif. **Changement de valeur** : `rankDelta` ne porte plus que sur la dernière saison de la période. La valeur précédente était faussée par le changement de saison du 05/11.
 
 - 18/11/2026 : **v1.14.0** :
   - nouvelle route `GET /heroes/stats` (`HeroMetaBatch`) ;
