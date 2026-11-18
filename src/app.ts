@@ -123,10 +123,11 @@ export function createApp({
     createTrackedPlayerRouter(auth, createTrackedInsightsService(players)),
   );
   api.use(createCatalogRouter(catalog));
-  api.use(createMetaRouter(createMetaService(deadlock, catalog, items)));
+  const meta = createMetaService(deadlock, catalog, items);
+  api.use(createMetaRouter(meta));
   api.use('/items', createItemsRouter(items));
   api.use(createBuildsRouter(builds, catalog));
-  api.use('/players', createPlayersRouter(players));
+  api.use('/players', createPlayersRouter(players, meta));
   api.use('/groups', createGroupRouter(auth, createGroupCompareService(players, catalog)));
 
   app.use('/api', api);

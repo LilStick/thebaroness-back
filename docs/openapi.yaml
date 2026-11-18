@@ -1,9 +1,9 @@
-# Généré depuis src/docs/openapi.ts (v1.12.0) par `npm run openapi`.
+# Généré depuis src/docs/openapi.ts (v1.13.0) par `npm run openapi`.
 # Ne pas modifier à la main.
 openapi: 3.1.0
 info:
   title: thebaroness API
-  version: 1.12.0
+  version: 1.13.0
   description: "API du tracker de statistiques Deadlock. Les statistiques proviennent de Deadlock API (api.deadlock-api.com, source communautaire indépendante de Valve) ; l'espace privé est stocké dans MongoDB. Erreurs : `{ \"error\": { \"code\", \"message\" } }`. Inconnu = `null`, jamais 0."
 servers:
   - url: /api
@@ -276,6 +276,13 @@ paths:
               - win
               - loss
             default: all
+        - name: include
+          in: query
+          description: "v1.13.0. `summary` : joint à chaque partie de la page son résumé (`summary`) et ajoute `summaryCoverage`. Parties lues 4 à la fois via le cache partagé avec `/matches/{matchId}` (7 jours). Ne change ni le tri, ni la pagination, ni le curseur."
+          schema:
+            type: string
+            enum:
+              - summary
       description: "Sans filtre : comportement v1.8 (tout l’historique). Avec filtres : sélection sur TOUT l’historique en cache, puis tri (`playedAt` décroissant, puis `matchId` décroissant) et pagination. 0 résultat : `items: []`."
       responses:
         "200":
@@ -4380,15 +4387,103 @@ components:
         items:
           type: array
           items:
-            $ref: "#/components/schemas/MatchSummary"
+            allOf:
+              - $ref: "#/components/schemas/MatchSummary"
+              - type: object
+                properties:
+                  summary:
+                    description: v1.13.0, avec `include=summary` seulement. null si la partie est indisponible ou si le joueur n’y figure pas.
+                    oneOf:
+                      - type: "null"
+                      - $ref: "#/components/schemas/PlayerMatchSummary"
         nextCursor:
           type:
             - string
             - "null"
         appliedFilters:
           $ref: "#/components/schemas/AppliedFilters"
+        summaryCoverage:
+          type: object
+          description: v1.13.0, avec `include=summary` seulement.
+          required:
+            - requested
+            - available
+            - notes
+          properties:
+            requested:
+              type: integer
+            available:
+              type: integer
+            notes:
+              type: array
+              items:
+                type: string
+                enum:
+                  - some_matches_unavailable
+                  - item_catalog_unavailable
         meta:
           $ref: "#/components/schemas/DataMeta"
+    PlayerMatchSummary:
+      type: object
+      description: Résumé d’une partie du point de vue du joueur ; mêmes règles que les champs de `MatchPlayer`.
+      required:
+        - mvpRank
+        - killParticipation
+        - kda
+        - netWorthRank
+        - teamNetWorthRank
+        - playersInMatch
+        - lastHitsPerMinute
+        - performanceTags
+        - finalItemIds
+        - teamAverageBadge
+      properties:
+        mvpRank:
+          type:
+            - integer
+            - "null"
+          description: Officiel (Valve)
+        killParticipation:
+          type:
+            - number
+            - "null"
+        kda:
+          type:
+            - number
+            - "null"
+        netWorthRank:
+          type:
+            - integer
+            - "null"
+        teamNetWorthRank:
+          type:
+            - integer
+            - "null"
+        playersInMatch:
+          type: integer
+          description: Dénominateur de `netWorthRank`
+        lastHitsPerMinute:
+          type:
+            - number
+            - "null"
+        performanceTags:
+          type: array
+          items:
+            type: string
+            enum:
+              - match_top_net_worth
+              - match_best_kda
+        finalItemIds:
+          type:
+            - array
+            - "null"
+          items:
+            type: integer
+          description: null si le catalogue d’items est indisponible
+        teamAverageBadge:
+          type:
+            - integer
+            - "null"
     TrackedInsights:
       type: object
       required:

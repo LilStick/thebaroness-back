@@ -212,3 +212,48 @@ export function playerMetrics(match: NormalizedMatch) {
     };
   });
 }
+
+/**
+ * Participation aux éliminations : `(K + A) / éliminations de l'équipe × 100`, 2 décimales.
+ * `null` si une élimination de l'équipe est inconnue, si l'équipe n'en a aucune ou si K/A manque.
+ */
+export function killParticipation(
+  player: NormalizedPlayer,
+  team: NormalizedPlayer[],
+): number | null {
+  const teamKills = team.every((p) => p.kills !== null)
+    ? team.reduce((sum, p) => sum + (p.kills ?? 0), 0)
+    : null;
+  if (!teamKills || player.kills === null || player.assists === null) return null;
+  return round2(((player.kills + player.assists) / teamKills) * 100);
+}
+
+/**
+ * Résumé d'une partie du point de vue d'un joueur (lignes d'historique) : mêmes règles que
+ * `/matches/{id}`. `null` si le joueur n'apparaît pas dans la partie.
+ */
+export function playerMatchSummary(
+  match: NormalizedMatch,
+  accountId: number,
+  itemIndex: Map<number, CatalogItem> | null,
+) {
+  const index = match.players.findIndex((p) => p.accountId === accountId);
+  const player = match.players[index];
+  if (!player) return null;
+  const metrics = playerMetrics(match)[index];
+  const team = match.players.filter((p) => p.team === player.team);
+  return {
+    mvpRank: player.mvpRank,
+    killParticipation: killParticipation(player, team),
+    kda: metrics?.kda ?? null,
+    netWorthRank: metrics?.netWorthRank ?? null,
+    teamNetWorthRank: metrics?.teamNetWorthRank ?? null,
+    playersInMatch: match.players.length,
+    lastHitsPerMinute: metrics?.lastHitsPerMinute ?? null,
+    performanceTags: metrics?.performanceTags ?? [],
+    finalItemIds: splitItems(player.items, itemIndex).finalItemIds,
+    teamAverageBadge: match.averageBadges[player.team] || null,
+  };
+}
+
+export type PlayerMatchSummary = NonNullable<ReturnType<typeof playerMatchSummary>>;

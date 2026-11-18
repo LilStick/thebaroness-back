@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { steamIdSchema } from '../../shared/schemas';
+import { steamIdSchema, steamIdToAccountId } from '../../shared/schemas';
+import type { MetaService } from '../meta/meta.service';
 import { parse } from '../../shared/validation';
 import type { PlayersService } from './players.service';
 import {
@@ -28,9 +29,14 @@ const matchesQuerySchema = historyFilterSchema.extend({
     .max(50, 'limit : entre 1 et 50')
     .default(20),
   cursor: z.string().max(128, 'cursor : curseur invalide').optional(),
+  /** v1.13.0 : `summary` joint le résumé de chaque partie de la page (sinon v1.12 inchangé). */
+  include: z.enum(['summary'], 'include : summary').optional(),
 });
 
-export function createPlayersRouter(players: PlayersService): Router {
+/** Résumés de parties (fournis par le module meta, qui possède le cache des parties). */
+export type MatchSummaries = Pick<MetaService, 'matchSummaries'>;
+
+export function createPlayersRouter(players: PlayersService, matches?: MatchSummaries): Router {
   const router = Router();
 
   router.get('/search', async (req, res) => {
@@ -87,8 +93,32 @@ export function createPlayersRouter(players: PlayersService): Router {
 
   router.get('/:steamId/matches', async (req, res) => {
     const steamId = parse(steamIdSchema, req.params.steamId);
-    const { limit, cursor, ...filter } = parse(matchesQuerySchema, req.query);
-    res.json(await players.matches(steamId, limit, cursor, filter));
+    const { limit, cursor, include, ...filter } = parse(matchesQuerySchema, req.query);
+    const page = await players.matches(steamId, limit, cursor, filter);
+    if (include !== 'summary' || !matches) return void res.json(page);
+    const ids = page.items.map((m) => m.matchId);
+    const { summaries, itemCatalogAvailable, stale } = await matches.matchSummaries(
+      ids,
+      steamIdToAccountId(steamId),
+    );
+    const available = ids.filter((id) => summaries.get(id)).length;
+    res.json({
+      ...page,
+      items: page.items.map((m) => ({ ...m, summary: summaries.get(m.matchId) ?? null })),
+      summaryCoverage: {
+        requested: ids.length,
+        available,
+        notes: [
+          ...(available < ids.length ? ['some_matches_unavailable'] : []),
+          ...(itemCatalogAvailable ? [] : ['item_catalog_unavailable']),
+        ],
+      },
+      meta: {
+        ...page.meta,
+        isStale: page.meta.isStale || stale,
+        isPartial: page.meta.isPartial || available < ids.length || !itemCatalogAvailable,
+      },
+    });
   });
 
   return router;
