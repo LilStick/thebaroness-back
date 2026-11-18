@@ -24,9 +24,14 @@ Principe : uniquement des **ajouts**. Aucun champ, aucune route ni aucun statut 
 
 ## Non fait, proposé pour la suite
 
-| Sujet                                          | Proposition                                                                                                                                                      | Pourquoi pas maintenant                                                                                                         |
-| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Lignes d'historique (50 appels `/matches/:id`) | ajouter à `/players/:id/matches?include=summary` un résumé de partie (MVP, KP, rang de valeur nette) pour les parties **déjà en cache** `match:v3`, `null` sinon | demande de décider qui préchauffe les parties ; risque de multiplier les appels source si on va chercher les parties manquantes |
-| `DataMeta`                                     | fusionner `meta()`, `dataMeta()` et la construction de `group.compare`                                                                                           | refactor interne sans effet sur le contrat                                                                                      |
-| Stampede du cache                              | verrou par clé dans `cached()`                                                                                                                                   | utile si le trafic augmente ; aujourd'hui, la déduplication HTTP du client suffit                                               |
-| Rang dans la recherche                         | lire le rang seulement s'il est déjà en cache                                                                                                                    | lecture Mongo par résultat ; gain faible                                                                                        |
+| Sujet                  | Proposition                                                            | Pourquoi pas maintenant                                                           |
+| ---------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `DataMeta`             | fusionner `meta()`, `dataMeta()` et la construction de `group.compare` | refactor interne sans effet sur le contrat                                        |
+| Stampede du cache      | verrou par clé dans `cached()`                                         | utile si le trafic augmente ; aujourd'hui, la déduplication HTTP du client suffit |
+| Rang dans la recherche | lire le rang seulement s'il est déjà en cache                          | lecture Mongo par résultat ; gain faible                                          |
+
+## v1.13.0 : résumés des lignes d'historique
+
+`GET /players/{id}/matches?include=summary` joint un `summary` à chaque partie de la page. Les parties manquantes sont lues à la source, 4 à la fois, puis gardées 7 jours dans le cache `match:v3`, partagé avec `/matches/{id}`. Sans `include`, la réponse est identique à celle de la v1.12.
+
+Mesure réelle pour 50 parties : 8,5 s à froid, 50 ms à chaud. C'est le même nombre d'appels source que les 50 appels `/matches/:id` que faisait le front, mais en une seule requête HTTP, avec une concurrence bornée et un cache partagé.

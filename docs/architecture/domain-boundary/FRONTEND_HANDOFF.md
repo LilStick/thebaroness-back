@@ -198,6 +198,47 @@ Mesure réelle en Europe le 18/11 : 98 entrées sur 100 ont un SteamID, un rang 
 - supprimer `EntryRank`, qui faisait jusqu'à 10 appels `/players/:id`. Un `badge` à `null` signifie qu'aucun rang n'est connu, y compris dans le profil.
 - afficher `avatarUrl`.
 
+## 6 bis. `GET /players/{steamId}/matches?include=summary` (v1.13.0)
+
+```ts
+// avec include=summary, chaque MatchSummary gagne :
+summary: {
+  mvpRank: number | null;             // officiel (Valve)
+  killParticipation: number | null;
+  kda: number | null;
+  netWorthRank: number | null;        // sur playersInMatch, ex æquo partagés
+  teamNetWorthRank: number | null;
+  playersInMatch: number;
+  lastHitsPerMinute: number | null;
+  performanceTags: ('match_top_net_worth' | 'match_best_kda')[];
+  finalItemIds: number[] | null;      // null si catalogue d'items indisponible
+  teamAverageBadge: number | null;
+} | null;                             // null : partie indisponible ou joueur absent
+// et la page gagne :
+summaryCoverage: { requested: number; available: number; notes: ('some_matches_unavailable' | 'item_catalog_unavailable')[] };
+```
+
+Exemple réel (LilStick) :
+
+```json
+{
+  "mvpRank": null,
+  "killParticipation": 58.33,
+  "kda": 3.18,
+  "netWorthRank": 2,
+  "teamNetWorthRank": 1,
+  "playersInMatch": 12,
+  "lastHitsPerMinute": 3.62,
+  "performanceTags": [],
+  "finalItemIds": [84321454, 3074274290],
+  "teamAverageBadge": null
+}
+```
+
+**Côté front** : `useMatchEnrichment` et `enrichMatch` (`matchModel.ts`) disparaissent. Il suffit d'ajouter `include=summary` à `usePlayerHistory`.
+
+Une page de 50 parties met environ 8 s à froid et 50 ms à chaud. Pour un premier affichage rapide, mieux vaut charger 20 parties.
+
 ## 7. Inchangé
 
 - `/players/search` : pseudo et avatar, sans rang (ajouter le rang coûterait 2 appels par résultat).

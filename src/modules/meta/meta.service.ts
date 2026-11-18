@@ -1,4 +1,4 @@
-import { percent, round2 } from '../../shared/metrics';
+import { mapLimit, percent, round2 } from '../../shared/metrics';
 import { cached } from '../../database/api-cache';
 import type { DeadlockApi, KnownRank } from '../../integrations/deadlock/deadlock.api';
 import type { RawHeroAnalytics } from '../../integrations/deadlock/deadlock.schemas';
@@ -7,7 +7,15 @@ import { accountIdToSteamId } from '../../shared/schemas';
 import { toGameMode, toMatchMode } from '../../integrations/deadlock/game-modes';
 import { dataMeta, type CatalogService } from '../catalog/catalog.service';
 import type { ItemsService } from '../items/items.service';
-import { normalizeMatch, playerMetrics, splitItems, teamTotals } from './match-detail';
+import {
+  killParticipation,
+  normalizeMatch,
+  playerMatchSummary,
+  playerMetrics,
+  splitItems,
+  teamTotals,
+  type PlayerMatchSummary,
+} from './match-detail';
 import { rankFromBadge } from '../catalog/ranks';
 
 export const LEADERBOARD_REGIONS = ['Europe', 'Asia', 'NAmerica', 'SAmerica', 'Oceania'] as const;
@@ -25,6 +33,8 @@ const TTL = {
 } as const;
 
 /** Entrées renvoyées pour le classement (la source en compte plusieurs centaines). */
+/** Parties lues simultanément pour les résumés d'historique (le client plafonne à 8). */
+export const SUMMARY_CONCURRENCY = 4;
 const LEADERBOARD_SIZE = 100;
 /** En dessous, un taux de victoire par palier n'est pas significatif → `null`. */
 export const MIN_TIER_SAMPLE = 200;
@@ -197,7 +207,51 @@ export function createMetaService(
   /** Index des héros facultatif : sans lui, noms de repli et réponse partielle. */
   const heroIndex = () => catalog.heroIndex().catch(() => null);
 
+  /** Partie normalisée en cache (7 jours), partagée par le détail et les résumés d'historique. */
+  const loadMatch = (matchId: string) =>
+    // Clé v3 : partie normalisée (achats, statistiques de fin de partie), sans le brut (≈ 1,3 Mo).
+    cached(`match:v3:${matchId}`, { ttlMs: TTL.match }, async () => {
+      const info = await deadlock.getMatchMetadata(matchId);
+      if (!info) return null;
+      const accountIds = info.players
+        .map((p) => p.account_id)
+        .filter((id): id is number => Boolean(id));
+      // Pseudos en un seul appel ; sans eux, repli sur le SteamID.
+      const profiles = await deadlock.getSteamProfiles(accountIds).catch(() => []);
+      const names = new Map(profiles.map((p) => [p.accountId, p.displayName]));
+      return {
+        match: normalizeMatch(info),
+        names: Object.fromEntries(names) as Record<string, string>,
+      };
+    });
+
   return {
+    /**
+     * Résumés de parties du point de vue d'un joueur, pour une page d'historique (≤ 50 parties).
+     * Concurrence bornée ; chaque partie passe par le cache `match:v3` (lue à la source une seule
+     * fois, puis partagée avec `/matches/{id}`). Une partie en échec donne `null`, jamais une erreur.
+     */
+    async matchSummaries(matchIds: string[], accountId: number) {
+      const itemIndex = await items.index().catch(() => null);
+      let stale = false;
+      const summaries = await mapLimit(matchIds, SUMMARY_CONCURRENCY, async (matchId) => {
+        try {
+          const detail = await loadMatch(matchId);
+          if (detail.isStale) stale = true;
+          return detail.data ? playerMatchSummary(detail.data.match, accountId, itemIndex) : null;
+        } catch {
+          return null;
+        }
+      });
+      return {
+        summaries: new Map<string, PlayerMatchSummary | null>(
+          matchIds.map((id, i) => [id, summaries[i] ?? null]),
+        ),
+        itemCatalogAvailable: itemIndex !== null,
+        stale,
+      };
+    },
+
     async leaderboard(region: LeaderboardRegion) {
       const [board, heroes, tiers] = await Promise.all([
         // Clé v3 : le cache contient le compte retenu et son badge pour chaque entrée.
@@ -297,21 +351,7 @@ export function createMetaService(
     },
 
     async match(matchId: string) {
-      // Clé v3 : partie normalisée (achats, statistiques de fin de partie), sans le brut (≈ 1,3 Mo).
-      const detail = await cached(`match:v3:${matchId}`, { ttlMs: TTL.match }, async () => {
-        const info = await deadlock.getMatchMetadata(matchId);
-        if (!info) return null;
-        const accountIds = info.players
-          .map((p) => p.account_id)
-          .filter((id): id is number => Boolean(id));
-        // Pseudos en un seul appel ; sans eux, repli sur le SteamID.
-        const profiles = await deadlock.getSteamProfiles(accountIds).catch(() => []);
-        const names = new Map(profiles.map((p) => [p.accountId, p.displayName]));
-        return {
-          match: normalizeMatch(info),
-          names: Object.fromEntries(names) as Record<string, string>,
-        };
-      });
+      const detail = await loadMatch(matchId);
       if (!detail.data) throw notFound('Partie introuvable.');
 
       const [heroes, itemIndex, tiers] = await Promise.all([
@@ -328,9 +368,6 @@ export function createMetaService(
       const metrics = new Map(info.players.map((p, i) => [p, computed[i]]));
       const teams = SIDES.map((side, team) => {
         const players = info.players.filter((p) => p.team === team);
-        const teamKills = players.every((p) => p.kills !== null)
-          ? players.reduce((sum, p) => sum + (p.kills ?? 0), 0)
-          : null;
         const averageBadge = info.averageBadges[team] || null;
         const averageRank = averageBadge && tiers ? rankFromBadge(averageBadge, tiers.data) : null;
         return {
@@ -359,10 +396,7 @@ export function createMetaService(
                 lastHits: p.lastHits,
                 denies: p.denies,
                 mvpRank: p.mvpRank,
-                killParticipation:
-                  teamKills && p.kills !== null && p.assists !== null
-                    ? round2(((p.kills + p.assists) / teamKills) * 100)
-                    : null,
+                killParticipation: killParticipation(p, players),
                 stats: p.stats,
                 ...splitItems(p.items, itemIndex),
                 ...metrics.get(p),

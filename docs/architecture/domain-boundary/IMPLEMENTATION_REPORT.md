@@ -52,6 +52,21 @@
 
 ## Écarts avec la demande
 
-- L'enrichissement des lignes d'historique (50 appels `/matches/:id`) n'est pas fait. Il est proposé dans `API_MIGRATION_PLAN.md`.
 - `DataMeta` garde trois constructeurs. C'est une dette interne, sans effet sur le contrat.
 - Le front n'a pas été modifié : son dépôt est en lecture seule ici.
+
+## v1.13.0 : lignes d'historique
+
+- Nouveau paramètre `include=summary` sur `/players/{id}/matches`. Pour chaque partie de la page, il ajoute : `mvpRank`, `killParticipation`, `kda`, `netWorthRank`, `teamNetWorthRank`, `playersInMatch`, `lastHitsPerMinute`, `performanceTags`, `finalItemIds` et `teamAverageBadge`. La réponse gagne aussi `summaryCoverage`.
+- `loadMatch` (cache `match:v3`) est désormais partagé entre `/matches/{id}` et les résumés. `killParticipation` est factorisée dans `match-detail.ts`.
+- Tests synthétiques (4) :
+  - résumé conforme aux règles du détail de partie ;
+  - partie en 503 et joueur absent → `null` isolé ;
+  - second appel servi par le cache ;
+  - réponse inchangée sans `include` ;
+  - curseur toujours valable ;
+  - 400 sur une valeur invalide.
+
+  470 tests au total.
+
+- Vérification réelle sur LilStick (50 parties) : 50 résumés sur 50, 8,5 s à froid, 50 ms à chaud.

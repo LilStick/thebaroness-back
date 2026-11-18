@@ -5,7 +5,7 @@ import type { OpenAPIV3_1 as O } from 'openapi-types';
  * Servi sur /api/openapi.json et /api/docs ; exporté dans docs/openapi.yaml (`npm run openapi`).
  * Versionnement : majeure = changement incompatible, mineure = ajout, patch = correction.
  */
-export const OPENAPI_VERSION = '1.12.0';
+export const OPENAPI_VERSION = '1.13.0';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const response = (name: string) => ({ $ref: `#/components/responses/${name}` });
@@ -328,6 +328,13 @@ export const openApiDocument: O.Document = {
             name: 'outcome',
             in: 'query',
             schema: { type: 'string', enum: ['all', 'win', 'loss'], default: 'all' },
+          },
+          {
+            name: 'include',
+            in: 'query',
+            description:
+              'v1.13.0. `summary` : joint à chaque partie de la page son résumé (`summary`) et ajoute `summaryCoverage`. Parties lues 4 à la fois via le cache partagé avec `/matches/{matchId}` (7 jours). Ne change ni le tri, ni la pagination, ni le curseur.',
+            schema: { type: 'string', enum: ['summary'] },
           },
         ],
         description:
@@ -2781,10 +2788,79 @@ export const openApiDocument: O.Document = {
         type: 'object',
         required: ['items', 'nextCursor', 'appliedFilters', 'meta'],
         properties: {
-          items: { type: 'array', items: ref('MatchSummary') },
+          items: {
+            type: 'array',
+            items: {
+              allOf: [
+                ref('MatchSummary'),
+                {
+                  type: 'object',
+                  properties: {
+                    summary: {
+                      description:
+                        'v1.13.0, avec `include=summary` seulement. null si la partie est indisponible ou si le joueur n’y figure pas.',
+                      oneOf: [{ type: 'null' }, ref('PlayerMatchSummary')],
+                    },
+                  },
+                },
+              ],
+            },
+          },
           nextCursor: nullable('string'),
           appliedFilters: ref('AppliedFilters'),
+          summaryCoverage: {
+            type: 'object',
+            description: 'v1.13.0, avec `include=summary` seulement.',
+            required: ['requested', 'available', 'notes'],
+            properties: {
+              requested: { type: 'integer' },
+              available: { type: 'integer' },
+              notes: {
+                type: 'array',
+                items: {
+                  type: 'string',
+                  enum: ['some_matches_unavailable', 'item_catalog_unavailable'],
+                },
+              },
+            },
+          },
           meta: ref('DataMeta'),
+        },
+      },
+      PlayerMatchSummary: {
+        type: 'object',
+        description:
+          'Résumé d’une partie du point de vue du joueur ; mêmes règles que les champs de `MatchPlayer`.',
+        required: [
+          'mvpRank',
+          'killParticipation',
+          'kda',
+          'netWorthRank',
+          'teamNetWorthRank',
+          'playersInMatch',
+          'lastHitsPerMinute',
+          'performanceTags',
+          'finalItemIds',
+          'teamAverageBadge',
+        ],
+        properties: {
+          mvpRank: nullable('integer', { description: 'Officiel (Valve)' }),
+          killParticipation: nullable('number'),
+          kda: nullable('number'),
+          netWorthRank: nullable('integer'),
+          teamNetWorthRank: nullable('integer'),
+          playersInMatch: { type: 'integer', description: 'Dénominateur de `netWorthRank`' },
+          lastHitsPerMinute: nullable('number'),
+          performanceTags: {
+            type: 'array',
+            items: { type: 'string', enum: ['match_top_net_worth', 'match_best_kda'] },
+          },
+          finalItemIds: {
+            type: ['array', 'null'],
+            items: { type: 'integer' },
+            description: 'null si le catalogue d’items est indisponible',
+          },
+          teamAverageBadge: nullable('integer'),
         },
       },
       TrackedInsights: {
