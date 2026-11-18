@@ -98,6 +98,8 @@ describe('GET /players/:steamId/matches?include=summary (synthétique)', () => {
       teamNetWorthRank: 2,
       playersInMatch: 3,
       lastHitsPerMinute: 6,
+      // v1.14.0 : 30 000 / 20 min.
+      netWorthPerMinute: 1500,
       performanceTags: ['match_best_kda'],
       // La capacité 300 n'est pas un objet.
       finalItemIds: [100],

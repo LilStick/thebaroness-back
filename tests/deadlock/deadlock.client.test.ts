@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { DeadlockClient } from '../../src/integrations/deadlock/deadlock.client';
+import { DeadlockClient, routeOf } from '../../src/integrations/deadlock/deadlock.client';
 import { silentLogger } from '../helpers/app';
 import { createFetchMock, type FetchMock } from '../helpers/fetch-mock';
 
@@ -102,5 +102,26 @@ describe('DeadlockClient', () => {
     expect(second).toMatchObject({ status: 503 });
     expect(second.retryAfter).toBeGreaterThan(29);
     expect(upstream.calls).toHaveLength(1);
+  });
+
+  it('Retry-After bloque seulement la route concernée (quotas par route)', async () => {
+    upstream
+      .on(/\/v1\/players\/rank$/, { status: 429, headers: { 'retry-after': '30' } })
+      .on(/match-history$/, { status: 429, headers: { 'retry-after': '30' } })
+      .on(/search$/, { body: [{ id: 1 }] });
+    const c = client();
+    await expect(c.get('/v1/players/rank', {}, schema)).rejects.toMatchObject({ status: 503 });
+    // Autre route : appel normal.
+    await expect(c.get('/v1/players/search', {}, schema)).resolves.toEqual([{ id: 1 }]);
+    // Même route, autre identifiant : bloquée sans appel.
+    await expect(c.get('/v1/players/1/match-history', {}, schema)).rejects.toMatchObject({
+      status: 503,
+    });
+    const before = upstream.calls.length;
+    await expect(c.get('/v1/players/2/match-history', {}, schema)).rejects.toMatchObject({
+      retryAfter: expect.any(Number),
+    });
+    expect(upstream.calls.length).toBe(before);
+    expect(routeOf('/v1/matches/123/metadata')).toBe('/v1/matches/:id/metadata');
   });
 });

@@ -242,6 +242,7 @@ export function playerMatchSummary(
   if (!player) return null;
   const metrics = playerMetrics(match)[index];
   const team = match.players.filter((p) => p.team === player.team);
+  const nwpm = perMinute(player.netWorth, match.durationSeconds);
   return {
     mvpRank: player.mvpRank,
     killParticipation: killParticipation(player, team),
@@ -250,6 +251,8 @@ export function playerMatchSummary(
     teamNetWorthRank: metrics?.teamNetWorthRank ?? null,
     playersInMatch: match.players.length,
     lastHitsPerMinute: metrics?.lastHitsPerMinute ?? null,
+    // v1.14.0 : souls/min, même formule que `/trends.series` ; null si durée ≤ 0 ou inconnue.
+    netWorthPerMinute: nwpm === null ? null : round2(nwpm),
     performanceTags: metrics?.performanceTags ?? [],
     finalItemIds: splitItems(player.items, itemIndex).finalItemIds,
     teamAverageBadge: match.averageBadges[player.team] || null,

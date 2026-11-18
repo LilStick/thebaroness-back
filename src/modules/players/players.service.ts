@@ -1,3 +1,4 @@
+import { combineMeta, type DataMeta } from '../../shared/data-meta';
 import { kda, percent, round2 } from '../../shared/metrics';
 import { HERO_META_PERIOD, loadHeroMetaTable } from '../meta/meta.service';
 import {
@@ -84,12 +85,7 @@ export interface ReadOptions {
 const maxAge = (options?: ReadOptions) => (options?.refresh ? REFRESH_MIN_INTERVAL_MS : undefined);
 
 /** Métadonnées de fraîcheur (§19.4) jointes à toute réponse issue de Deadlock API. */
-export interface DataMeta {
-  fetchedAt: string;
-  sourceUpdatedAt: string | null;
-  isStale: boolean;
-  isPartial: boolean;
-}
+export type { DataMeta };
 
 export interface PlayerStats {
   matchesPlayed: number | null;
@@ -283,17 +279,7 @@ function isAfterCursor(match: StoredMatch, cursor: Cursor): boolean {
   return BigInt(match.matchId) < BigInt(cursor.matchId);
 }
 
-const meta = (
-  sources: Array<Pick<Cached<unknown>, 'fetchedAt' | 'isStale'>>,
-  extra: Partial<DataMeta> = {},
-): DataMeta => ({
-  // Date de la donnée la plus ancienne utilisée.
-  fetchedAt: new Date(Math.min(...sources.map((s) => s.fetchedAt.getTime()))).toISOString(),
-  sourceUpdatedAt: null,
-  isStale: sources.some((s) => s.isStale),
-  isPartial: false,
-  ...extra,
-});
+const meta = combineMeta;
 
 export function createPlayersService(deadlock: DeadlockApi, catalog: CatalogService) {
   const profileOf = (accountId: number, options?: ReadOptions) =>

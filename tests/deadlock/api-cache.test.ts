@@ -1,4 +1,4 @@
-import { ApiCacheModel, cached } from '../../src/database/api-cache';
+import { ApiCacheModel, cached, inflightCacheKeys } from '../../src/database/api-cache';
 import { AppError } from '../../src/shared/errors';
 import { useTestDb } from '../helpers/db';
 
@@ -71,5 +71,41 @@ describe('cache api_cache', () => {
     await cached('vide', { ttlMs: 60_000 }, async () => ({ items: [], extra: {} }));
     const result = await cached('vide', { ttlMs: 60_000 }, jest.fn());
     expect(result.data).toEqual({ items: [], extra: {} });
+  });
+
+  describe('requêtes simultanées sur une même clé (single-flight)', () => {
+    it('une seule lecture source ; chaque appelant reçoit sa propre copie', async () => {
+      let release: (v: { list: number[] }) => void = () => {};
+      const fetcher = jest.fn(() => new Promise<{ list: number[] }>((r) => (release = r)));
+      const calls = Array.from({ length: 5 }, () => cached('sf', { ttlMs: 60_000 }, fetcher));
+      // Laisse les 5 lectures Mongo se terminer avant de répondre.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(inflightCacheKeys()).toEqual(['sf']);
+      release({ list: [1, 2] });
+      const results = await Promise.all(calls);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      results[1]!.data.list.push(3);
+      expect(results[0]!.data.list).toEqual([1, 2]);
+      expect(results.every((r) => !r.isStale)).toBe(true);
+      expect(inflightCacheKeys()).toEqual([]);
+    });
+
+    it('échec partagé : chacun applique le repli périmé ; la clé est libérée', async () => {
+      await cached('sf2', { ttlMs: 1 }, async () => ({ v: 1 }));
+      await new Promise((r) => setTimeout(r, 5));
+      // Échec lent : les trois appels sont en attente sur la même lecture.
+      const fetcher = jest.fn(
+        () => new Promise((_, reject) => setTimeout(() => reject(unavailable()), 50)),
+      );
+      const results = await Promise.all(
+        [1, 2, 3].map(() => cached('sf2', { ttlMs: 60_000 }, fetcher)),
+      );
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(results.every((r) => r.isStale && (r.data as { v: number }).v === 1)).toBe(true);
+      expect(inflightCacheKeys()).toEqual([]);
+      // Nouvel essai possible ensuite.
+      await cached('sf2', { ttlMs: 60_000 }, async () => ({ v: 2 }));
+      expect((await cached('sf2', { ttlMs: 60_000 }, jest.fn())).data).toEqual({ v: 2 });
+    });
   });
 });

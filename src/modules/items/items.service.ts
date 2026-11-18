@@ -1,3 +1,4 @@
+import { percent } from '../../shared/metrics';
 import { cached, type Cached } from '../../database/api-cache';
 import type { AnalyticsFilter, DeadlockApi } from '../../integrations/deadlock/deadlock.api';
 import type { RawItemAsset } from '../../integrations/deadlock/deadlock.schemas';
@@ -22,9 +23,6 @@ export interface AnalyticsQuery {
   heroId?: number;
   matchMode?: 'ranked' | 'unranked';
 }
-
-const percent = (part: number, total: number) =>
-  total ? Math.round((part / total) * 10_000) / 100 : null;
 
 /**
  * Borne basse d'une période d'agrégats, arrondie à l'heure (vers le passé) : la source et notre

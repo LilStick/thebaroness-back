@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mapLimit, percent, round2 } from '../../shared/metrics';
 import { cached } from '../../database/api-cache';
 import type { DeadlockApi, KnownRank } from '../../integrations/deadlock/deadlock.api';
@@ -69,6 +70,24 @@ export function loadHeroMetaTable(deadlock: DeadlockApi) {
 
 /** Période de la méta globale des héros (fixée par la source). */
 export const HERO_META_PERIOD = '30d' as const;
+
+/** Héros jouable sans donnée dans la fenêtre : toutes les valeurs à `null` (jamais 0). */
+export function emptyHeroStats(heroId: number): HeroMetaStats {
+  return {
+    heroId,
+    matches: null,
+    winRate: null,
+    pickRate: null,
+    avgKills: null,
+    avgDeaths: null,
+    avgAssists: null,
+    winRateByTier: Array.from({ length: TIERS }, (_, tier) => ({
+      tier,
+      winRate: null,
+      matches: null,
+    })),
+  };
+}
 
 export function computeHeroMetaStats(rows: RawHeroAnalytics): Record<string, HeroMetaStats> {
   const byHero = new Map<
@@ -277,9 +296,15 @@ export function createMetaService(
       const { entries, complete } = board.data;
       // Avatars : un seul appel groupé pour les 100 comptes, en cache séparé (échec → null).
       const accountIds = entries.flatMap((e) => (e.accountId ? [e.accountId] : []));
+      // Clé liée à l'ensemble des comptes : un nouvel entrant déclenche un nouvel appel groupé
+      // (au plus un par mise à jour du classement) au lieu d'attendre 6 h sans avatar.
+      const accountsKey = createHash('sha1')
+        .update([...accountIds].sort((a, b) => a - b).join(','))
+        .digest('base64url')
+        .slice(0, 12);
       const avatars = await cached(
-        `leaderboard-avatars:v1:${region}`,
-        { ttlMs: TTL.leaderboardAvatars },
+        `leaderboard-avatars:v2:${region}:${accountsKey}`,
+        { ttlMs: TTL.leaderboardAvatars, staleMs: 24 * 3600_000 },
         async () =>
           Object.fromEntries(
             (await deadlock.getSteamProfiles(accountIds)).map((p) => [p.accountId, p.avatarUrl]),
@@ -333,21 +358,35 @@ export function createMetaService(
       // Vérifie l'existence du héros (404) avant d'interroger les agrégats.
       await catalog.hero(heroId);
       const all = await loadHeroMetaTable(deadlock);
-      const stats: HeroMetaStats = all.data[heroId] ?? {
-        heroId,
-        matches: null,
-        winRate: null,
-        pickRate: null,
-        avgKills: null,
-        avgDeaths: null,
-        avgAssists: null,
-        winRateByTier: Array.from({ length: TIERS }, (_, tier) => ({
-          tier,
-          winRate: null,
-          matches: null,
-        })),
+      return { stats: all.data[heroId] ?? emptyHeroStats(heroId), meta: dataMeta(all) };
+    },
+
+    /**
+     * Méta de plusieurs héros en une requête (v1.14.0) : une lecture du catalogue et une lecture
+     * de `analytics:hero-stats`, quel que soit le nombre de héros. Sans `heroIds` : tous les héros
+     * jouables. Un id inconnu ou non jouable est listé dans `unknownHeroIds` (pas de 404 global).
+     */
+    async heroStatsBatch(heroIds?: number[]) {
+      const [ids, all] = await Promise.all([
+        catalog.playableHeroIds(),
+        loadHeroMetaTable(deadlock),
+      ]);
+      const playableSet = new Set(ids.data);
+      const playable = (id: number) => playableSet.has(id);
+      const requested = heroIds ?? ids.data;
+      const known = requested.filter(playable);
+      const items = known.map((id) => all.data[id] ?? emptyHeroStats(id));
+      return {
+        items,
+        unknownHeroIds: requested.filter((id) => !playable(id)),
+        scope: { period: HERO_META_PERIOD, gameMode: 'normal' as const, matchMode: 'all' as const },
+        coverage: {
+          requested: requested.length,
+          known: known.length,
+          withStats: items.filter((s) => s.matches !== null).length,
+        },
+        meta: dataMeta(all),
       };
-      return { stats, meta: dataMeta(all) };
     },
 
     async match(matchId: string) {

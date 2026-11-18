@@ -122,9 +122,10 @@ export function createApp({
     '/tracked-players',
     createTrackedPlayerRouter(auth, createTrackedInsightsService(players)),
   );
-  api.use(createCatalogRouter(catalog));
   const meta = createMetaService(deadlock, catalog, items);
+  // Meta avant le catalogue : `/heroes/stats` ne doit pas être lu comme `/heroes/:heroId`.
   api.use(createMetaRouter(meta));
+  api.use(createCatalogRouter(catalog));
   api.use('/items', createItemsRouter(items));
   api.use(createBuildsRouter(builds, catalog));
   api.use('/players', createPlayersRouter(players, meta));
