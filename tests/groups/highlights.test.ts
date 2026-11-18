@@ -16,6 +16,9 @@ const member = (steamId: string, extra: Partial<GroupMemberStats> = {}): GroupMe
   kdaSampleSize: 10,
   currentRankScore: null,
   rankDelta: null,
+  excludedUnknownModeMatches: 0,
+  previous: null,
+  deltaVsPrevious: null,
   ...extra,
 });
 

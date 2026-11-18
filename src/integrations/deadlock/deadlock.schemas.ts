@@ -216,14 +216,17 @@ export type RawHeroAnalytics = z.infer<typeof heroAnalyticsSchema>;
 /** `GET /v1/assets/ranked-seasons` : bornes dans `intervals[]` (timestamps Unix en s). */
 export const rankedSeasonsSchema = z.array(
   z.object({
+    name: z.string().nullish(),
     intervals: z.array(
       z.object({
+        interval: z.number().int().nullish(),
         start_timestamp: z.number().int(),
         end_timestamp: z.number().int().nullish(),
       }),
     ),
   }),
 );
+export type RawRankedSeasons = z.output<typeof rankedSeasonsSchema>;
 
 /**
  * `GET /v1/assets/items` (≈ 6 Mo, 780 entrées) : objets de boutique (`upgrade`), capacités

@@ -95,6 +95,8 @@ describe('Profil P1 : rang, activité, coéquipiers', () => {
           // Pas d'image propre au sous-rang 3 : image du palier (même règle que le profil).
           imageUrl: 'https://r.test/10.webp',
           outcome: 'loss',
+          // v1.15.0 : saison classée de la source.
+          season: 1,
         },
         expect.objectContaining({
           matchId: '5',

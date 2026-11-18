@@ -5,7 +5,7 @@ import type { OpenAPIV3_1 as O } from 'openapi-types';
  * Servi sur /api/openapi.json et /api/docs ; exporté dans docs/openapi.yaml (`npm run openapi`).
  * Versionnement : majeure = changement incompatible, mineure = ajout, patch = correction.
  */
-export const OPENAPI_VERSION = '1.14.0';
+export const OPENAPI_VERSION = '1.15.0';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const response = (name: string) => ({ $ref: `#/components/responses/${name}` });
@@ -634,7 +634,7 @@ export const openApiDocument: O.Document = {
         tags: ['Joueurs'],
         summary: 'Coéquipiers et adversaires fréquents',
         description:
-          'Agrégats Deadlock API (`mate-stats`, `enemy-stats`) : parties communes et victoires DU JOUEUR DEMANDÉ. Un joueur souvent rencontré n’est pas un ami Steam ; `sameParty=true` ne garde que les parties jouées dans le même groupe (information de la source). Un seul mode par requête (la source n’agrège pas). Cache 10 min.',
+          'Agrégats Deadlock API (`mate-stats`, `enemy-stats`) : parties communes et victoires DU JOUEUR DEMANDÉ. Un joueur souvent rencontré n’est pas un ami Steam ; `sameParty=true` applique l’heuristique de la source : même équipe ET amis Steam au début de la partie (liste d’amis publique) ; ce n’est PAS une escouade de matchmaking confirmée. Un seul mode par requête (la source n’agrège pas). Cache 10 min.',
         parameters: [
           steamIdParam,
           periodParam(false),
@@ -646,7 +646,8 @@ export const openApiDocument: O.Document = {
           {
             name: 'sameParty',
             in: 'query',
-            description: 'Coéquipiers : seulement les parties jouées dans le même groupe',
+            description:
+              'Coéquipiers : même équipe et amis Steam au début de la partie (heuristique de la source, pas une escouade confirmée)',
             schema: { type: 'string', enum: ['true', 'false'], default: 'false' },
           },
           {
@@ -1056,15 +1057,58 @@ export const openApiDocument: O.Document = {
       get: {
         tags: ['Groupes'],
         summary: 'Lister mes groupes',
-        description: 'Du plus récemment modifié au plus ancien.',
+        description:
+          'Du plus récemment modifié au plus ancien. v1.15.0 : `include=members` ajoute l’identité de chaque membre (`members`), résolue en une seule passe pour tous les groupes (SteamID dédoublonnés) : une lecture de cache (`identity:v1:<id>` 6 h, et `profile:<id>`), puis un appel groupé `/v1/players/steam` par lot de 100 comptes manquants. Source en échec : copie périmée si elle existe, sinon repli `displayName` = SteamID64, `avatarUrl` null, `resolved` false. La liste n’échoue jamais à cause des identités. Sans `include` : réponse v1.14 inchangée (`{ items }`).',
         security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: 'include',
+            in: 'query',
+            schema: { type: 'string', enum: ['members'] },
+          },
+        ],
         responses: {
           '200': {
             description: 'Groupes (vide : `{ "items": [] }`)',
             content: json({
               type: 'object',
               required: ['items'],
-              properties: { items: { type: 'array', items: ref('Group') } },
+              properties: {
+                items: {
+                  type: 'array',
+                  items: {
+                    allOf: [
+                      ref('Group'),
+                      {
+                        type: 'object',
+                        properties: {
+                          members: {
+                            type: 'array',
+                            description:
+                              'v1.15.0, avec `include=members` seulement. Même ordre que `steamIds`.',
+                            items: ref('MemberIdentity'),
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+                membersCoverage: {
+                  type: 'object',
+                  description: 'v1.15.0, avec `include=members` seulement.',
+                  required: ['requested', 'resolved', 'fetched', 'providerFailed'],
+                  properties: {
+                    requested: { type: 'integer', description: 'SteamID distincts' },
+                    resolved: { type: 'integer' },
+                    fetched: { type: 'integer', description: 'Lus à la source pour cette requête' },
+                    providerFailed: { type: 'boolean' },
+                  },
+                },
+                meta: {
+                  description: 'v1.15.0, avec `include=members` seulement.',
+                  allOf: [ref('DataMeta')],
+                },
+              },
             }),
           },
           '401': response('Unauthorized'),
@@ -1148,8 +1192,10 @@ export const openApiDocument: O.Document = {
         summary: 'Comparer les membres sur une période',
         description:
           '`7d` et `30d` glissants ; `season` depuis le début de la saison classée courante ' +
-          '(toutes les parties si elle est inconnue). Un membre indisponible est omis avec ' +
-          '`meta.isPartial` ; tous indisponibles → 503.',
+          '(toutes les parties si elle est inconnue). Un membre indisponible est omis de `members`, ' +
+          'listé dans `unavailable` avec sa raison, et `meta.isPartial` ; tous indisponibles → 503. ' +
+          'v1.15.0 : `gameMode` et `matchMode` (mêmes valeurs et défauts qu’`/overview`) filtrent ' +
+          'avant toute agrégation ; une partie au mode inconnu ne compte que sous « all ».',
         security: [{ bearerAuth: [] }],
         parameters: [
           trackedIdParam,
@@ -1157,6 +1203,15 @@ export const openApiDocument: O.Document = {
             name: 'period',
             in: 'query',
             schema: { type: 'string', enum: ['7d', '30d', 'season'], default: '30d' },
+          },
+          gameModeParam,
+          matchModeParam,
+          {
+            name: 'include',
+            in: 'query',
+            description:
+              'v1.15.0. `pairs` : ajoute `pairs` (parties communes entre membres, calcul exact sur les historiques déjà chargés, aucun appel externe).',
+            schema: { type: 'string', enum: ['pairs'] },
           },
         ],
         responses: {
@@ -1184,6 +1239,15 @@ export const openApiDocument: O.Document = {
             name: 'period',
             in: 'query',
             schema: { type: 'string', enum: ['7d', '30d', 'season'], default: '30d' },
+          },
+          gameModeParam,
+          matchModeParam,
+          {
+            name: 'include',
+            in: 'query',
+            description:
+              'v1.15.0. `pairs` : ajoute `pairs` (parties communes entre membres, calcul exact sur les historiques déjà chargés, aucun appel externe).',
+            schema: { type: 'string', enum: ['pairs'] },
           },
         ],
         responses: {
@@ -1587,10 +1651,49 @@ export const openApiDocument: O.Document = {
       },
       GroupCompare: {
         type: 'object',
-        required: ['group', 'period', 'members', 'highlights', 'methodology', 'meta'],
+        required: [
+          'group',
+          'period',
+          'appliedFilters',
+          'members',
+          'unavailable',
+          'highlights',
+          'methodology',
+          'meta',
+        ],
         properties: {
           group: ref('Group'),
           period: { type: 'string', enum: ['7d', '30d', 'season'] },
+          appliedFilters: {
+            type: 'object',
+            description: 'v1.15.0',
+            required: ['period', 'gameMode', 'matchMode'],
+            properties: {
+              period: { type: 'string', enum: ['7d', '30d', 'season'] },
+              gameMode: { type: 'string', enum: ['all', 'normal', 'street_brawl'] },
+              matchMode: { type: 'string', enum: ['all', 'ranked', 'unranked'] },
+            },
+          },
+          unavailable: {
+            type: 'array',
+            description:
+              'v1.15.0. Membres omis de `members`, dans l’ordre du groupe. `reason` : `not_found` (profil introuvable, définitif), `rate_limited` (quota Deadlock API, réessayer plus tard), `timeout` (délai dépassé), `provider_error` (source en panne ou réponse inexploitable), `unknown` (non classifiable).',
+            items: {
+              type: 'object',
+              required: ['steamId', 'reason'],
+              properties: {
+                steamId: { type: 'string' },
+                reason: {
+                  type: 'string',
+                  enum: ['not_found', 'rate_limited', 'timeout', 'provider_error', 'unknown'],
+                },
+              },
+            },
+          },
+          pairs: {
+            description: 'v1.15.0, avec `include=pairs` seulement.',
+            allOf: [ref('GroupPairs')],
+          },
           members: {
             type: 'array',
             items: {
@@ -1611,6 +1714,9 @@ export const openApiDocument: O.Document = {
                 'kdaSampleSize',
                 'currentRankScore',
                 'rankDelta',
+                'excludedUnknownModeMatches',
+                'previous',
+                'deltaVsPrevious',
               ],
               properties: {
                 steamId: { type: 'string' },
@@ -1658,7 +1764,7 @@ export const openApiDocument: O.Document = {
                   description: 'Parties classées de la période, du plus ancien au plus récent',
                   items: {
                     type: 'object',
-                    required: ['at', 'score', 'badge'],
+                    required: ['at', 'score', 'badge', 'season'],
                     properties: {
                       at: { type: 'string', format: 'date-time' },
                       score: {
@@ -1668,6 +1774,10 @@ export const openApiDocument: O.Document = {
                         description: 'tier * 6 + subrank',
                       },
                       badge: { type: 'integer', description: 'v1.12.0. tier * 10 + subrank' },
+                      season: nullable('integer', {
+                        description:
+                          'v1.15.0. Saison classée de la source (`methodology.seasons`). Deux saisons ne se comparent pas : couper la courbe à chaque changement. null si les saisons sont inconnues.',
+                      }),
                     },
                   },
                 },
@@ -1677,8 +1787,57 @@ export const openApiDocument: O.Document = {
                 }),
                 rankDelta: nullable('integer', {
                   description:
-                    'v1.12.0. Dernier − premier `score` de `rankHistory` (sous-rangs gagnés) ; null sous 2 points.',
+                    'Dernier − premier `score` de `rankHistory`, **parmi les points de la même saison que le dernier** (v1.15.0 ; v1.12 à v1.14 : toute la période, faussé au changement de saison du 05/11/2026). null sous 2 points comparables.',
                 }),
+                excludedUnknownModeMatches: {
+                  type: 'integer',
+                  description:
+                    'v1.15.0. Parties de la période écartées par un filtre de mode précis car leur mode est inconnu (0 sous « all »).',
+                },
+                previous: {
+                  description:
+                    'v1.15.0. Même filtre sur la fenêtre de même durée juste avant (`methodology.previousPeriod`). null pour `season` (pas de période précédente de même durée).',
+                  oneOf: [
+                    { type: 'null' },
+                    {
+                      type: 'object',
+                      required: [
+                        'from',
+                        'to',
+                        'matches',
+                        'wins',
+                        'winRate',
+                        'kda',
+                        'kdaSampleSize',
+                      ],
+                      properties: {
+                        from: { type: 'string', format: 'date-time' },
+                        to: { type: 'string', format: 'date-time' },
+                        matches: { type: 'integer' },
+                        wins: { type: 'integer' },
+                        winRate: nullable('number'),
+                        kda: nullable('number'),
+                        kdaSampleSize: { type: 'integer' },
+                      },
+                    },
+                  ],
+                },
+                deltaVsPrevious: {
+                  description:
+                    'v1.15.0. Actuel − précédent. `winRate` (points) et `kda` null si l’un des deux échantillons a moins de 5 parties (KDA : parties complètes). null pour `season`.',
+                  oneOf: [
+                    { type: 'null' },
+                    {
+                      type: 'object',
+                      required: ['matches', 'winRate', 'kda'],
+                      properties: {
+                        matches: { type: 'integer' },
+                        winRate: nullable('number'),
+                        kda: nullable('number'),
+                      },
+                    },
+                  ],
+                },
               },
             },
           },
@@ -1712,13 +1871,52 @@ export const openApiDocument: O.Document = {
           methodology: {
             type: 'object',
             description: 'v1.12.0. Règles appliquées.',
-            required: ['periodFrom', 'rankScore', 'kda', 'highlightMinMatches', 'ties'],
+            required: [
+              'periodFrom',
+              'rankScore',
+              'kda',
+              'highlightMinMatches',
+              'ties',
+              'rankDeltaScope',
+              'seasons',
+              'seasonBoundariesKnown',
+              'previousPeriod',
+            ],
             properties: {
               periodFrom: nullable('string', { format: 'date-time' }),
               rankScore: { type: 'string' },
               kda: { type: 'string' },
               highlightMinMatches: { type: 'integer' },
               ties: { type: 'string' },
+              rankDeltaScope: {
+                type: 'string',
+                enum: ['latest_season_in_period'],
+                description: 'v1.15.0',
+              },
+              seasons: {
+                type: 'array',
+                description: 'v1.15.0. Saisons classées qui chevauchent la période.',
+                items: ref('RankedSeason'),
+              },
+              seasonBoundariesKnown: {
+                type: 'boolean',
+                description:
+                  'v1.15.0. false : saisons indisponibles, `season` null partout et `rankDelta` sur toute la période.',
+              },
+              previousPeriod: {
+                description: 'v1.15.0. null pour `season`.',
+                oneOf: [
+                  { type: 'null' },
+                  {
+                    type: 'object',
+                    required: ['from', 'to'],
+                    properties: {
+                      from: { type: 'string', format: 'date-time' },
+                      to: { type: 'string', format: 'date-time' },
+                    },
+                  },
+                ],
+              },
             },
           },
           meta: ref('DataMeta'),
@@ -2475,9 +2673,15 @@ export const openApiDocument: O.Document = {
       },
       RankHistory: {
         type: 'object',
-        required: ['period', 'points', 'coverage', 'meta'],
+        required: ['period', 'seasons', 'points', 'coverage', 'meta'],
         properties: {
           period: { type: 'string', enum: ['7d', '30d', 'season'] },
+          seasons: {
+            type: 'array',
+            description:
+              'v1.15.0. Saisons classées couvertes par les points. Deux saisons ne se comparent pas (changement du 05/11/2026 : recompression des badges par la source).',
+            items: ref('RankedSeason'),
+          },
           points: {
             type: 'array',
             items: {
@@ -2492,8 +2696,10 @@ export const openApiDocument: O.Document = {
                 'name',
                 'imageUrl',
                 'outcome',
+                'season',
               ],
               properties: {
+                season: nullable('integer', { description: 'v1.15.0. null si saisons inconnues' }),
                 at: { type: 'string', format: 'date-time' },
                 matchId: { type: 'string' },
                 badge: { type: 'integer', description: 'tier × 10 + subrank (Valve)' },
@@ -2535,6 +2741,8 @@ export const openApiDocument: O.Document = {
                     'season_start_unknown',
                     'badge_missing_on_some_ranked_matches',
                     'history_stale',
+                    'spans_multiple_seasons',
+                    'season_boundaries_unknown',
                   ],
                 },
               },
@@ -2929,6 +3137,104 @@ export const openApiDocument: O.Document = {
             description: 'null si le catalogue d’items est indisponible',
           },
           teamAverageBadge: nullable('integer'),
+        },
+      },
+      MemberIdentity: {
+        type: 'object',
+        required: ['steamId', 'displayName', 'avatarUrl', 'resolved'],
+        properties: {
+          steamId: { type: 'string' },
+          displayName: {
+            type: 'string',
+            description: 'Pseudo Steam ; repli sur le SteamID64 si `resolved` est false',
+          },
+          avatarUrl: nullable('string'),
+          resolved: { type: 'boolean', description: 'false : identité non résolue (repli)' },
+        },
+      },
+      RankedSeason: {
+        type: 'object',
+        required: ['season', 'name', 'startedAt', 'endedAt'],
+        properties: {
+          season: { type: 'integer', description: '`interval` de `/v1/assets/ranked-seasons`' },
+          name: nullable('string', { description: 'Ex. « Beta Season 2 »' }),
+          startedAt: { type: 'string', format: 'date-time' },
+          endedAt: nullable('string', { format: 'date-time' }),
+        },
+      },
+      GroupPairs: {
+        type: 'object',
+        description:
+          'Parties communes entre membres, sur la sélection de la comparaison (période et modes). Calcul exact : intersection des historiques des deux joueurs. Même résultat ⇒ même équipe (une seule équipe gagne) ; résultats opposés ⇒ adversaires. Une escouade de matchmaking n’est pas déterminable (`partyConfirmed` false). Les parties abandonnées ou non scorées par l’un des deux ne sont pas comptées. Seules les paires avec au moins une partie commune figurent dans `items`.',
+        required: ['scope', 'items', 'coverage'],
+        properties: {
+          scope: {
+            type: 'object',
+            required: ['relation', 'partyConfirmed', 'basis', 'period', 'gameMode', 'matchMode'],
+            properties: {
+              relation: { type: 'string', enum: ['same_team'] },
+              partyConfirmed: { type: 'boolean', enum: [false] },
+              basis: { type: 'string', enum: ['match_history_intersection'] },
+              period: { type: 'string', enum: ['7d', '30d', 'season'] },
+              gameMode: { type: 'string', enum: ['all', 'normal', 'street_brawl'] },
+              matchMode: { type: 'string', enum: ['all', 'ranked', 'unranked'] },
+            },
+          },
+          items: {
+            type: 'array',
+            description: 'Par `together.matches` décroissant ; égalité : ordre du groupe.',
+            items: {
+              type: 'object',
+              required: ['steamIds', 'together', 'against'],
+              properties: {
+                steamIds: {
+                  type: 'array',
+                  minItems: 2,
+                  maxItems: 2,
+                  items: { type: 'string' },
+                  description: 'Dans l’ordre du groupe',
+                },
+                together: {
+                  type: 'object',
+                  required: ['matches', 'wins', 'losses', 'winRate', 'lastPlayedAt'],
+                  properties: {
+                    matches: { type: 'integer' },
+                    wins: { type: 'integer' },
+                    losses: { type: 'integer' },
+                    winRate: nullable('number', { description: 'null si `matches` vaut 0' }),
+                    lastPlayedAt: nullable('string', { format: 'date-time' }),
+                  },
+                },
+                against: {
+                  type: 'object',
+                  required: ['matches', 'firstWins'],
+                  properties: {
+                    matches: { type: 'integer' },
+                    firstWins: { type: 'integer', description: 'Victoires de `steamIds[0]`' },
+                  },
+                },
+              },
+            },
+          },
+          coverage: {
+            type: 'object',
+            required: [
+              'membersIncluded',
+              'membersMissing',
+              'pairsEvaluated',
+              'pairsWithCommonMatches',
+            ],
+            properties: {
+              membersIncluded: { type: 'integer' },
+              membersMissing: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Membres indisponibles : leurs paires ne sont pas évaluées',
+              },
+              pairsEvaluated: { type: 'integer' },
+              pairsWithCommonMatches: { type: 'integer' },
+            },
+          },
         },
       },
       TrackedInsights: {

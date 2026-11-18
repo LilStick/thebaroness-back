@@ -1,6 +1,6 @@
 import type { Logger } from 'pino';
 import type { z } from 'zod';
-import { AppError } from '../../shared/errors';
+import { AppError, type UpstreamReason } from '../../shared/errors';
 
 export interface DeadlockClientOptions {
   baseUrl: string;
@@ -15,12 +15,13 @@ export interface DeadlockClientOptions {
 
 type Query = Record<string, string | number | boolean | undefined>;
 
-const unavailable = (retryAfter?: number) =>
+const unavailable = (reason: UpstreamReason, retryAfter?: number) =>
   new AppError(
     503,
     'SERVICE_UNAVAILABLE',
     'Les statistiques sont temporairement indisponibles.',
     retryAfter,
+    reason,
   );
 const upstreamError = () =>
   new AppError(502, 'UPSTREAM_ERROR', 'Réponse inexploitable du fournisseur de statistiques.');
@@ -51,7 +52,7 @@ export class DeadlockClient {
   private readonly queue: Array<() => void> = [];
   private active = 0;
   /** Échéance de blocage par route (segments numériques remplacés par `:id`). */
-  private readonly blockedUntil = new Map<string, number>();
+  private readonly blockedUntil = new Map<string, { until: number; reason: UpstreamReason }>();
   private readonly timeoutMs: number;
   private readonly maxConcurrent: number;
 
@@ -107,8 +108,8 @@ export class DeadlockClient {
   ): Promise<z.output<S> | null> {
     const now = Date.now();
     const route = routeOf(url.pathname);
-    const until = this.blockedUntil.get(route) ?? 0;
-    if (now < until) throw unavailable((until - now) / 1000);
+    const block = this.blockedUntil.get(route);
+    if (block && now < block.until) throw unavailable(block.reason, (block.until - now) / 1000);
 
     const { logger } = this.options;
     const log = { path: url.pathname };
@@ -122,8 +123,11 @@ export class DeadlockClient {
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (error) {
-      logger.warn({ ...log, err: (error as Error).name }, 'Deadlock API injoignable');
-      throw unavailable();
+      const name = (error as Error).name;
+      logger.warn({ ...log, err: name }, 'Deadlock API injoignable');
+      throw unavailable(
+        name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'unreachable',
+      );
     }
 
     if (res.status === 404) {
@@ -133,9 +137,11 @@ export class DeadlockClient {
     if (res.status === 429 || res.status === 503 || res.status === 504) {
       await res.body?.cancel();
       const retryAfter = parseRetryAfter(res.headers.get('retry-after'), Date.now());
-      if (retryAfter) this.blockedUntil.set(route, Date.now() + retryAfter * 1000);
+      const reason: UpstreamReason = res.status === 429 ? 'rate_limited' : 'unavailable';
+      if (retryAfter)
+        this.blockedUntil.set(route, { until: Date.now() + retryAfter * 1000, reason });
       logger.warn({ ...log, status: res.status, retryAfter }, 'Deadlock API indisponible');
-      throw unavailable(retryAfter);
+      throw unavailable(reason, retryAfter);
     }
     if (!res.ok) {
       await res.body?.cancel();

@@ -143,3 +143,66 @@ Tests synthétiques ajoutés :
 - single-flight : 2 cas ;
 - blocage par route ;
 - avatars d'un nouvel entrant.
+
+## v1.15.0 : groupes et comparaison (Sprint 3, 19/11/2026)
+
+Référence : demandes du front dans `docs/back-groups-sprint3-requests.md` (front `2762ced`).
+
+| Demande                           | État                                       | Détail                                                                                     |
+| --------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| P1-1 Identité des membres         | **Livré**                                  | `GET /groups?include=members`                                                              |
+| P1-2 Jouer ensemble               | **Livré, sur une autre base que proposée** | `include=pairs`, intersection exacte des historiques ; `mate-stats` écarté (voir plus bas) |
+| P1-3 Filtres de mode              | **Livré**                                  | `gameMode`, `matchMode`, `appliedFilters`                                                  |
+| P1-4 Membres indisponibles        | **Livré**                                  | `unavailable[]` avec 5 raisons réellement distinguables                                    |
+| P2-1 Période précédente           | **Livré avec limites**                     | 7d et 30d ; `null` pour `season`                                                           |
+| P2-2 Chute des rangs              | **Cause établie et corrigée**              | Changement de saison de la source ; voir `docs/architecture/rank-season-change.md`         |
+| Marqueur `rankReset` heuristique  | **Refusé**                                 | Les frontières de saison publiées par la source suffisent et sont fiables                  |
+| Escouade de matchmaking confirmée | **Refusé**                                 | Information absente de la source                                                           |
+
+### P1-2 : pourquoi pas `mate-stats`
+
+D'après la spécification de la source, `same_party` signifie : même équipe **et amis Steam** au début de la partie, d'après la liste d'amis publique. C'est une heuristique, pas une escouade de matchmaking. La description de `relationships` disait l'inverse ; elle est corrigée dans l'OpenAPI et le HANDOFF.
+
+`mate-stats` aurait aussi demandé N appels supplémentaires, une troncature (`minMatches`) et ne gère pas `matchMode`.
+
+L'intersection des historiques que la comparaison a déjà chargés est **exacte** :
+
+- même partie et même résultat signifie forcément la même équipe, puisqu'une seule équipe gagne ;
+- résultats opposés signifie des adversaires ;
+- elle ne coûte **aucun appel** ;
+- elle honore la période et les deux filtres de mode.
+
+Recoupement réel : sur une paire Eternus, `mate-stats` donne 16 parties et 11 victoires (identique dans les deux sens), nous 15 et 11. La partie d'écart a `player_match_outcome = 5` (non scorée) pour les deux joueurs : elle est exclue, comme dans toutes nos statistiques.
+
+### P1-4 : raisons
+
+Le client Deadlock porte maintenant la cause de chaque indisponibilité (`AppError.upstreamReason`, jamais sérialisé) :
+
+- `rate_limited` : 429, ou route bloquée après un 429 ;
+- `timeout` ;
+- `unreachable` ;
+- `unavailable` : 503 ou 504.
+
+La comparaison en déduit `not_found`, `rate_limited`, `timeout`, `provider_error` (unreachable, 502, 503) et `unknown`.
+
+### Coût et performances (données réelles, back local)
+
+| Opération                                     | À froid | À chaud | Appels externes                |
+| --------------------------------------------- | ------- | ------- | ------------------------------ |
+| Comparaison de 6 Eternus avec `include=pairs` | 3,1 s   | 47 ms   | aucun de plus que sans `pairs` |
+| Avec filtre `normal` + `ranked`               | n/a     | 35 ms   | aucun (filtre en mémoire)      |
+| `identities` de 9 joueurs                     | 0,9 s   | 4 ms    | 1 appel groupé                 |
+
+Pour les identités, 6 des 9 joueurs venaient des copies `profile:` existantes. Il faut un appel `/v1/players/steam` par tranche de 100 comptes manquants. En cas de quota épuisé, la liste reste en 200 : copie périmée si elle existe, sinon repli explicite.
+
+### Tests
+
+502 tests au vert, contre 483 avant. Les nouveaux tests synthétiques couvrent :
+
+- les modes : `all`, `normal`, `street_brawl`, `ranked`, `unranked`, mode inconnu, période vide, valeurs invalides ;
+- les saisons : points annotés, progression sur la dernière saison, saisons indisponibles, `rank-history` ;
+- la période précédente : 30 jours, et `season` à null ;
+- les paires : même équipe, adversaires, filtres, aucun appel, 20 membres (190 paires évaluées) ;
+- les indisponibilités : 404, 429, classification ;
+- les causes côté client : quota, délai dépassé, réseau, panne ;
+- les identités : déduplication entre groupes, un seul appel, cache chaud, réutilisation de `profile:`, source en 429, copie périmée, rétrocompatibilité.
