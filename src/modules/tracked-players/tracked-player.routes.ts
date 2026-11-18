@@ -3,9 +3,13 @@ import { getUserId } from '../../middleware/require-auth';
 import { objectIdSchema } from '../../shared/schemas';
 import { parse } from '../../shared/validation';
 import { createTrackedPlayerSchema, updateTrackedPlayerSchema } from './tracked-player.schemas';
+import type { TrackedInsights } from './tracked-player.insights';
 import { trackedPlayerService as service } from './tracked-player.service';
 
-export function createTrackedPlayerRouter(requireAuth: RequestHandler): Router {
+export function createTrackedPlayerRouter(
+  requireAuth: RequestHandler,
+  insights?: TrackedInsights,
+): Router {
   const router = Router();
   router.use(requireAuth);
 
@@ -17,6 +21,13 @@ export function createTrackedPlayerRouter(requireAuth: RequestHandler): Router {
     const input = parse(createTrackedPlayerSchema, req.body);
     res.status(201).json(await service.create(getUserId(req), input));
   });
+
+  // Avant `/:id` : « insights » n'est pas un identifiant.
+  if (insights) {
+    router.get('/insights', async (req, res) => {
+      res.json(await insights(getUserId(req)));
+    });
+  }
 
   router.get('/:id', async (req, res) => {
     res.json(await service.get(getUserId(req), parse(objectIdSchema, req.params.id)));

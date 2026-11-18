@@ -371,6 +371,8 @@ describe('Profil V2', () => {
           kdaSampleSize: 1,
           avgNetWorthPerMinute: 1000,
           netWorthPerMinuteSampleSize: 2,
+          globalMeta: null,
+          winRateVsMeta: null,
         },
         expect.objectContaining({ heroId: 2, matches: 1, wins: 0, losses: 1, winRate: 0 }),
       ]);

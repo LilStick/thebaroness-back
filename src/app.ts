@@ -26,6 +26,7 @@ import { createItemsService } from './modules/items/items.service';
 import { createPlayersRouter } from './modules/players/players.routes';
 import { createPlayersService } from './modules/players/players.service';
 import { createTrackedPlayerRouter } from './modules/tracked-players/tracked-player.routes';
+import { createTrackedInsightsService } from './modules/tracked-players/tracked-player.insights';
 
 export interface AppDeps {
   env: Env;
@@ -117,7 +118,10 @@ export function createApp({
     createRateLimiter({ windowMs: 15 * 60_000, limit: env.AUTH_RATE_LIMIT }),
     createAuthRouter(authService, auth),
   );
-  api.use('/tracked-players', createTrackedPlayerRouter(auth));
+  api.use(
+    '/tracked-players',
+    createTrackedPlayerRouter(auth, createTrackedInsightsService(players)),
+  );
   api.use(createCatalogRouter(catalog));
   api.use(createMetaRouter(createMetaService(deadlock, catalog, items)));
   api.use('/items', createItemsRouter(items));

@@ -1,3 +1,5 @@
+import { kda, percent, round2 } from '../../shared/metrics';
+import { HERO_META_PERIOD, loadHeroMetaTable } from '../meta/meta.service';
 import {
   type ActivityQuery,
   activityDays,
@@ -67,6 +69,9 @@ interface RelationsSnapshot {
 }
 /** Héros mis en avant par `/overview`. */
 const TOP_HEROES = 3;
+
+/** Taille de la « forme » des cartes joueur (dernières parties scorées). */
+export const FORM_SIZE = 10;
 
 /** Délai minimum entre deux appels au fournisseur pour un même joueur lors d'un refresh forcé. */
 export const REFRESH_MIN_INTERVAL_MS = 60_000;
@@ -148,8 +153,6 @@ const NULL_STATS: PlayerStats = {
   kda: null,
 };
 
-const round2 = (value: number) => Math.round(value * 100) / 100;
-
 /**
  * Résultat d'une partie pour le joueur, ou `null` si elle n'est pas scorée pour lui.
  * 1/2 : victoire/défaite. 0 (parties anciennes, résultat par joueur non enregistré) : déduit de
@@ -196,6 +199,25 @@ function toStoredMatches(entries: RawMatchHistoryEntry[]): StoredMatch[] {
  * Agrégats sur les parties disponibles (victoires/défaites). Les totaux K/D/A ne comptent
  * que les parties où la valeur est connue ; tout inconnu reste `null`, jamais 0 (§19.4).
  */
+/**
+ * KDA agrégé sur les seules parties où K, D et A sont tous connus (même population pour les
+ * trois totaux, comme `/overview`). `null` si aucune partie complète.
+ */
+export function completeCaseKda(matches: StoredMatch[]): number | null {
+  let kills = 0;
+  let deaths = 0;
+  let assists = 0;
+  let complete = 0;
+  for (const m of matches) {
+    if (m.kills === null || m.deaths === null || m.assists === null) continue;
+    kills += m.kills;
+    deaths += m.deaths;
+    assists += m.assists;
+    complete++;
+  }
+  return complete ? kda(kills, deaths, assists) : null;
+}
+
 export function computeStats(matches: StoredMatch[]): PlayerStats {
   if (matches.length === 0) return { ...NULL_STATS, matchesPlayed: 0, wins: 0, losses: 0 };
 
@@ -221,14 +243,11 @@ export function computeStats(matches: StoredMatch[]): PlayerStats {
     matchesPlayed: matches.length,
     wins,
     losses: matches.length - wins,
-    winRate: round2((wins / matches.length) * 100),
+    winRate: percent(wins, matches.length),
     kills,
     deaths,
     assists,
-    kda:
-      kills !== null && deaths !== null && assists !== null
-        ? round2((kills + assists) / Math.max(deaths, 1))
-        : null,
+    kda: completeCaseKda(matches),
   };
 }
 
@@ -506,26 +525,39 @@ export function createPlayersService(deadlock: DeadlockApi, catalog: CatalogServ
 
     /** Tendances : N dernières parties éligibles contre les N précédentes, winrate glissant. */
     async trends(steamId: string, query: TrendsQuery) {
-      const [, history] = await Promise.all([
+      const [, history, seasonStart] = await Promise.all([
         requireProfile(steamId),
         historyOf(steamIdToAccountId(steamId)),
+        query.period === 'season' ? catalog.seasonStart().catch(() => null) : null,
       ]);
-      const window = periodWindow(undefined, Date.now(), null);
+      const window = periodWindow(query.period, Date.now(), seasonStart);
       const { matches } = selectMatches(history.data, query, window);
       const result = trends(matches, query.size);
       const iso = (seconds: number) => new Date(seconds * 1000).toISOString();
+      const series = result.series.map((p) => ({ ...p, at: iso(p.at) }));
       return {
-        filters: { size: query.size, gameMode: query.gameMode, matchMode: query.matchMode },
+        filters: {
+          size: query.size,
+          period: query.period ?? null,
+          gameMode: query.gameMode,
+          matchMode: query.matchMode,
+        },
         recent: result.recent,
         previous: result.previous,
         delta: result.delta,
         rolling: result.rolling.map((p) => ({ ...p, at: iso(p.at) })),
+        series,
         coverage: {
           eligibleMatches: matches.length,
           rollingWindow: ROLLING_WINDOW,
+          seriesMatches: series.length,
+          seriesFrom: series[0]?.at ?? null,
+          seriesTo: series.at(-1)?.at ?? null,
+          rollingPointsComplete: series.filter((p) => p.rollingWinRate !== null).length,
           notes: [
             ...(result.complete ? [] : ['insufficient_history']),
             ...(history.isStale ? ['history_stale'] : []),
+            ...(window.seasonUnknown ? ['season_start_unknown'] : []),
           ],
         },
         meta: meta([history]),
@@ -631,7 +663,7 @@ export function createPlayersService(deadlock: DeadlockApi, catalog: CatalogServ
             matches: r.matches,
             wins: r.wins,
             losses: r.matches - r.wins,
-            winRate: r.matches ? Math.round((r.wins / r.matches) * 10_000) / 100 : null,
+            winRate: percent(r.wins, r.matches),
           };
         }) ?? null;
       return {
@@ -649,6 +681,56 @@ export function createPlayersService(deadlock: DeadlockApi, catalog: CatalogServ
           notes: window.seasonUnknown ? ['season_start_unknown'] : [],
         },
         meta: meta([result], { isPartial: !result.data.complete || window.seasonUnknown }),
+      };
+    },
+
+    /**
+     * Carte compacte d'un joueur pour les listes (suivis) : identité, rang connu, dernière
+     * partie et forme sur les `formSize` dernières parties scorées. Lit uniquement le cache
+     * partagé profil/historique (aucun appel si les copies sont fraîches). Historique en échec →
+     * carte partielle (rang, forme et dernière partie `null`) ; profil introuvable → 404.
+     */
+    async card(steamId: string, formSize = FORM_SIZE) {
+      const [profile, history, ranks] = await Promise.allSettled([
+        requireProfile(steamId),
+        historyOf(steamIdToAccountId(steamId)),
+        catalog.ranks(),
+      ]);
+      if (profile.status === 'rejected') throw profile.reason;
+      const hasHistory = history.status === 'fulfilled';
+      const matches = hasHistory ? history.value.data : [];
+      const badge = matches.find((m) => m.badge)?.badge ?? null;
+      const recent = matches.slice(0, formSize);
+      const wins = recent.filter((m) => m.win).length;
+      return {
+        player: {
+          displayName: profile.value.data.displayName,
+          avatarUrl: profile.value.data.avatarUrl,
+        },
+        rank: !hasHistory
+          ? null
+          : badge && ranks.status === 'fulfilled'
+            ? rankFromBadge(badge, ranks.value.data)
+            : badge
+              ? null
+              : UNRANKED,
+        lastMatchAt:
+          hasHistory && matches[0] ? new Date(matches[0].startTime * 1000).toISOString() : null,
+        form: hasHistory
+          ? {
+              // Du plus récent au plus ancien.
+              results: recent.map((m) => (m.win ? ('win' as const) : ('loss' as const))),
+              matchIds: recent.map((m) => m.matchId),
+              wins,
+              losses: recent.length - wins,
+              winRate: percent(wins, recent.length),
+              sampleSize: recent.length,
+              requestedSize: formSize,
+            }
+          : null,
+        meta: meta(hasHistory ? [profile.value, history.value] : [profile.value], {
+          isPartial: !hasHistory || (Boolean(badge) && ranks.status === 'rejected'),
+        }),
       };
     },
 
@@ -672,11 +754,15 @@ export function createPlayersService(deadlock: DeadlockApi, catalog: CatalogServ
         catalog.heroIndex().catch(() => null),
         filter.period === 'season' ? catalog.seasonStart().catch(() => null) : null,
       ]);
+      // Méta globale : une lecture de cache partagée pour tous les héros (pas de N+1).
+      const heroMeta = await loadHeroMetaTable(deadlock).catch(() => null);
       const window = periodWindow(filter.period, Date.now(), seasonStart);
       const { matches } = selectMatches(history.data, filter, window);
       const index = heroes?.data ?? {};
       const items = groupByHero(matches).map(([heroId, list]) => {
         const stats = aggregate(list);
+        const global = heroMeta ? (heroMeta.data[heroId] ?? null) : null;
+        const metaWinRate = global?.winRate ?? null;
         return {
           heroId,
           heroName: index[heroId]?.name ?? `Héros #${heroId}`,
@@ -689,11 +775,32 @@ export function createPlayersService(deadlock: DeadlockApi, catalog: CatalogServ
           kdaSampleSize: stats.kdaSampleSize,
           avgNetWorthPerMinute: stats.avgNetWorthPerMinute,
           netWorthPerMinuteSampleSize: stats.netWorthPerMinuteSampleSize,
+          globalMeta: global
+            ? { matches: global.matches, winRate: global.winRate, pickRate: global.pickRate }
+            : null,
+          winRateVsMeta:
+            stats.winRate !== null && metaWinRate !== null
+              ? round2(stats.winRate - metaWinRate)
+              : null,
         };
       });
       return {
         items,
         appliedFilters: appliedFilters(filter),
+        metaContext: heroMeta
+          ? {
+              period: HERO_META_PERIOD,
+              gameMode: 'normal' as const,
+              matchMode: 'all' as const,
+              // Comparaison directe seulement si le périmètre du joueur est le même.
+              comparable:
+                filter.period === HERO_META_PERIOD &&
+                filter.gameMode === 'normal' &&
+                filter.matchMode === 'all',
+              fetchedAt: heroMeta.fetchedAt.toISOString(),
+              isStale: heroMeta.isStale,
+            }
+          : null,
         meta: meta(heroes ? [history, heroes] : [history], {
           isPartial: !heroes || window.seasonUnknown,
         }),

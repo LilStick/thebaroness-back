@@ -1,9 +1,9 @@
+import { competitionRanks, kda, percent, perMinute, round2 } from '../../shared/metrics';
 import type { RawMatchMetadata } from '../../integrations/deadlock/deadlock.schemas';
 import type { CatalogItem } from '../items/items.service';
 
-export const round2 = (value: number) => Math.round(value * 100) / 100;
-const ratio = (part: number | null, total: number | null) =>
-  part !== null && total ? round2((part / total) * 100) : null;
+export { round2 };
+const ratio = percent;
 
 type RawPlayer = RawMatchMetadata['match_info']['players'][number];
 type RawStats = NonNullable<RawPlayer['stats']>[number];
@@ -123,4 +123,92 @@ export function splitItems(events: ItemEvent[] | null, index: Map<number, Catalo
       .filter((e) => index.get(e.itemId)?.type === 'ability')
       .map((e) => ({ abilityId: e.itemId, atSeconds: e.atSeconds })),
   };
+}
+
+export type NormalizedMatch = ReturnType<typeof normalizeMatch>;
+type NormalizedPlayer = NormalizedMatch['players'][number];
+
+/** Distinctions calculées par The Baroness (≠ `mvpRank`, valeur officielle de Valve). */
+export const PERFORMANCE_TAGS = ['match_top_net_worth', 'match_best_kda'] as const;
+export type PerformanceTag = (typeof PERFORMANCE_TAGS)[number];
+
+export const TEAM_TOTAL_KEYS = [
+  'kills',
+  'deaths',
+  'assists',
+  'netWorth',
+  'lastHits',
+  'denies',
+  'playerDamage',
+  'damageTaken',
+  'objectiveDamage',
+  'healing',
+] as const;
+export type TeamTotalKey = (typeof TEAM_TOTAL_KEYS)[number];
+
+const totalValue = (p: NormalizedPlayer, key: TeamTotalKey): number | null => {
+  switch (key) {
+    case 'playerDamage':
+    case 'damageTaken':
+    case 'objectiveDamage':
+    case 'healing':
+      return p.stats?.[key] ?? null;
+    default:
+      return p[key];
+  }
+};
+
+/**
+ * Totaux d'équipe : somme seulement si la valeur est connue pour tous les joueurs de l'équipe
+ * (sinon `null`, jamais une somme partielle) ; `knownPlayers` publie la couverture.
+ */
+export function teamTotals(players: NormalizedPlayer[]) {
+  const totals = {} as Record<TeamTotalKey, number | null>;
+  const knownPlayers = {} as Record<TeamTotalKey, number>;
+  for (const key of TEAM_TOTAL_KEYS) {
+    const values = players.map((p) => totalValue(p, key));
+    const known = values.filter((v): v is number => v !== null);
+    knownPlayers[key] = known.length;
+    totals[key] =
+      players.length > 0 && known.length === players.length
+        ? known.reduce((sum, v) => sum + v, 0)
+        : null;
+  }
+  return { totals, totalsCoverage: { players: players.length, knownPlayers } };
+}
+
+/**
+ * Métriques calculées par joueur, dans l'ordre de `match.players` :
+ * - `kda` : `(K + A) / max(D, 1)`, 2 décimales, `null` si K, D ou A manque ;
+ * - `netWorthRank` / `teamNetWorthRank` : rang « compétition » (1, 2, 2, 4) décroissant dans la
+ *   partie / dans l'équipe ; `null` si la valeur nette du joueur est inconnue ;
+ * - `lastHitsPerMinute` : `lastHits / (durée / 60)`, 2 décimales ;
+ * - `performanceTags` : distinctions attribuées seulement si la statistique est connue pour
+ *   tous les joueurs de la partie ; les ex æquo reçoivent tous la distinction.
+ */
+export function playerMetrics(match: NormalizedMatch) {
+  const { players } = match;
+  const kdas = players.map((p) => kda(p.kills, p.deaths, p.assists));
+  const netRanks = competitionRanks(players.map((p) => p.netWorth));
+  const teamNetRanks = players.map((p) => {
+    if (p.netWorth === null) return null;
+    const mates = players.filter((o) => o.team === p.team);
+    return competitionRanks(mates.map((o) => o.netWorth))[mates.indexOf(p)] ?? null;
+  });
+  const allNet = players.length > 0 && players.every((p) => p.netWorth !== null);
+  const allKda = players.length > 0 && kdas.every((v) => v !== null);
+  const bestKda = allKda ? Math.max(...(kdas as number[])) : null;
+  return players.map((p, i) => {
+    const tags: PerformanceTag[] = [];
+    if (allNet && netRanks[i] === 1) tags.push('match_top_net_worth');
+    if (bestKda !== null && kdas[i] === bestKda) tags.push('match_best_kda');
+    const lhpm = perMinute(p.lastHits, match.durationSeconds);
+    return {
+      kda: kdas[i] ?? null,
+      netWorthRank: netRanks[i] ?? null,
+      teamNetWorthRank: teamNetRanks[i] ?? null,
+      lastHitsPerMinute: lhpm === null ? null : round2(lhpm),
+      performanceTags: tags,
+    };
+  });
 }

@@ -5,7 +5,7 @@ import type { OpenAPIV3_1 as O } from 'openapi-types';
  * Servi sur /api/openapi.json et /api/docs ; exporté dans docs/openapi.yaml (`npm run openapi`).
  * Versionnement : majeure = changement incompatible, mineure = ajout, patch = correction.
  */
-export const OPENAPI_VERSION = '1.11.0';
+export const OPENAPI_VERSION = '1.12.0';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const response = (name: string) => ({ $ref: `#/components/responses/${name}` });
@@ -484,10 +484,30 @@ export const openApiDocument: O.Document = {
             description: 'Classement (cache 30 min, la source se met à jour chaque heure)',
             content: json({
               type: 'object',
-              required: ['region', 'items', 'meta'],
+              required: ['region', 'items', 'coverage', 'meta'],
               properties: {
                 region: { type: 'string' },
                 items: { type: 'array', items: ref('LeaderboardEntry') },
+                coverage: {
+                  type: 'object',
+                  description: 'v1.12.0. Fiabilité des enrichissements de la page.',
+                  required: [
+                    'entries',
+                    'withSteamId',
+                    'inferredSteamId',
+                    'withBadge',
+                    'withAvatar',
+                    'ranksComplete',
+                  ],
+                  properties: {
+                    entries: { type: 'integer' },
+                    withSteamId: { type: 'integer' },
+                    inferredSteamId: { type: 'integer' },
+                    withBadge: { type: 'integer' },
+                    withAvatar: { type: 'integer' },
+                    ranksComplete: { type: 'boolean' },
+                  },
+                },
                 meta: ref('DataMeta'),
               },
             }),
@@ -831,7 +851,7 @@ export const openApiDocument: O.Document = {
         tags: ['Joueurs'],
         summary: 'Tendances : N dernières parties contre les N précédentes',
         description:
-          'Depuis l’historique en cache. `previous` est null s’il n’y a pas `size` parties avant les `size` dernières (jamais de comparaison inégale). Winrate glissant sur 10 parties, défini à partir de la 10e partie.',
+          'Depuis l’historique en cache. `previous` est null s’il n’y a pas `size` parties avant les `size` dernières (jamais de comparaison inégale). Winrate glissant sur 10 parties, défini à partir de la 10e partie. v1.12.0 : `series` (une entrée par partie du bloc récent : KDA, souls/min, winrate glissant) et `period` optionnel (sans période : tout l’historique, comportement v1.11).',
         parameters: [
           steamIdParam,
           {
@@ -839,6 +859,7 @@ export const openApiDocument: O.Document = {
             in: 'query',
             schema: { type: 'integer', minimum: 5, maximum: 50, default: 20 },
           },
+          periodParam(false),
           gameModeParam,
           matchModeParam,
         ],
@@ -953,10 +974,40 @@ export const openApiDocument: O.Document = {
             description: 'Héros joués',
             content: json({
               type: 'object',
-              required: ['items', 'appliedFilters', 'meta'],
+              required: ['items', 'appliedFilters', 'metaContext', 'meta'],
               properties: {
                 items: { type: 'array', items: ref('PlayerHeroStat') },
                 appliedFilters: ref('AppliedFilters'),
+                metaContext: {
+                  description:
+                    'v1.12.0. Périmètre de la méta globale. null si elle est indisponible (`globalMeta` null partout).',
+                  oneOf: [
+                    { type: 'null' },
+                    {
+                      type: 'object',
+                      required: [
+                        'period',
+                        'gameMode',
+                        'matchMode',
+                        'comparable',
+                        'fetchedAt',
+                        'isStale',
+                      ],
+                      properties: {
+                        period: { type: 'string', enum: ['30d'] },
+                        gameMode: { type: 'string', enum: ['normal'] },
+                        matchMode: { type: 'string', enum: ['all'] },
+                        comparable: {
+                          type: 'boolean',
+                          description:
+                            'true si le joueur est filtré sur le même périmètre (period=30d, gameMode=normal, matchMode=all)',
+                        },
+                        fetchedAt: { type: 'string', format: 'date-time' },
+                        isStale: { type: 'boolean' },
+                      },
+                    },
+                  ],
+                },
                 meta: ref('DataMeta'),
               },
             }),
@@ -1156,10 +1207,24 @@ export const openApiDocument: O.Document = {
           '400': response('BadRequest'),
           '401': response('Unauthorized'),
           '409': errorResponse(
-            'Joueur déjà suivi par ce compte',
+            'Joueur déjà suivi (`ALREADY_TRACKED`) ou limite de 100 suivis atteinte (`TRACKED_LIMIT_REACHED`, v1.12.0)',
             'ALREADY_TRACKED',
             'Ce joueur est déjà dans votre liste.',
           ),
+          '429': response('RateLimited'),
+        },
+      },
+    },
+    '/tracked-players/insights': {
+      get: {
+        tags: ['Suivis'],
+        summary: 'Insights groupés de mes suivis',
+        description:
+          'v1.12.0. Une carte par suivi (100 au plus, dans l’ordre de `GET /tracked-players`) : identité, rang connu, dernière partie et forme sur les 10 dernières parties scorées. Lit le cache partagé profil/historique, 4 joueurs à la fois. Un joueur en échec garde sa ligne (`status`, `error`) sans faire échouer la liste.',
+        security: [{ bearerAuth: [] }],
+        responses: {
+          '200': { description: 'Insights', content: json(ref('TrackedInsights')) },
+          '401': response('Unauthorized'),
           '429': response('RateLimited'),
         },
       },
@@ -1272,6 +1337,7 @@ export const openApiDocument: O.Document = {
                   'UNAUTHORIZED',
                   'NOT_FOUND',
                   'ALREADY_TRACKED',
+                  'TRACKED_LIMIT_REACHED',
                   'RATE_LIMITED',
                   'UPSTREAM_ERROR',
                   'SERVICE_UNAVAILABLE',
@@ -1490,7 +1556,7 @@ export const openApiDocument: O.Document = {
       },
       GroupCompare: {
         type: 'object',
-        required: ['group', 'period', 'members', 'meta'],
+        required: ['group', 'period', 'members', 'highlights', 'methodology', 'meta'],
         properties: {
           group: ref('Group'),
           period: { type: 'string', enum: ['7d', '30d', 'season'] },
@@ -1511,6 +1577,9 @@ export const openApiDocument: O.Document = {
                 'longestWinStreak',
                 'bestMatch',
                 'rankHistory',
+                'kdaSampleSize',
+                'currentRankScore',
+                'rankDelta',
               ],
               properties: {
                 steamId: { type: 'string' },
@@ -1558,7 +1627,7 @@ export const openApiDocument: O.Document = {
                   description: 'Parties classées de la période, du plus ancien au plus récent',
                   items: {
                     type: 'object',
-                    required: ['at', 'score'],
+                    required: ['at', 'score', 'badge'],
                     properties: {
                       at: { type: 'string', format: 'date-time' },
                       score: {
@@ -1567,10 +1636,58 @@ export const openApiDocument: O.Document = {
                         maximum: 72,
                         description: 'tier * 6 + subrank',
                       },
+                      badge: { type: 'integer', description: 'v1.12.0. tier * 10 + subrank' },
                     },
                   },
                 },
+                kdaSampleSize: sampleSize('le KDA (v1.12.0)'),
+                currentRankScore: nullable('integer', {
+                  description: 'v1.12.0. `tier * 6 + subrank` de `rank` ; null si non classé.',
+                }),
+                rankDelta: nullable('integer', {
+                  description:
+                    'v1.12.0. Dernier − premier `score` de `rankHistory` (sous-rangs gagnés) ; null sous 2 points.',
+                }),
               },
+            },
+          },
+          highlights: {
+            type: 'array',
+            description:
+              'v1.12.0. Toujours 6 entrées, dans cet ordre. Valeur strictement positive ; égalité → tous les ex æquo dans l’ordre du groupe ; winrate et KDA à partir de 5 parties.',
+            items: {
+              type: 'object',
+              required: ['key', 'steamIds', 'value', 'matchId', 'eligibleMembers', 'minMatches'],
+              properties: {
+                key: {
+                  type: 'string',
+                  enum: [
+                    'biggest_climb',
+                    'best_win_rate',
+                    'most_wins',
+                    'best_kda',
+                    'longest_win_streak',
+                    'best_match',
+                  ],
+                },
+                steamIds: { type: 'array', items: { type: 'string' } },
+                value: nullable('number'),
+                matchId: nullable('string', { description: '`best_match` seulement' }),
+                eligibleMembers: { type: 'integer' },
+                minMatches: { type: 'integer' },
+              },
+            },
+          },
+          methodology: {
+            type: 'object',
+            description: 'v1.12.0. Règles appliquées.',
+            required: ['periodFrom', 'rankScore', 'kda', 'highlightMinMatches', 'ties'],
+            properties: {
+              periodFrom: nullable('string', { format: 'date-time' }),
+              rankScore: { type: 'string' },
+              kda: { type: 'string' },
+              highlightMinMatches: { type: 'integer' },
+              ties: { type: 'string' },
             },
           },
           meta: ref('DataMeta'),
@@ -1622,6 +1739,10 @@ export const openApiDocument: O.Document = {
             description:
               'Compte du joueur. Pseudo partagé par plusieurs comptes : celui au rang le plus élevé (voir `inferred`). null si la source ne relie le pseudo à aucun compte, ou à plusieurs sans rang connu.',
           }),
+          avatarUrl: nullable('string', {
+            description:
+              'v1.12.0. Avatar Steam du compte `steamId` (un appel groupé, cache 6 h) ; null si inconnu.',
+          }),
           inferred: {
             type: 'boolean',
             description:
@@ -1634,12 +1755,14 @@ export const openApiDocument: O.Document = {
               { type: 'null' },
               {
                 type: 'object',
-                required: ['tier', 'subrank', 'name', 'imageUrl'],
+                required: ['tier', 'subrank', 'name', 'imageUrl', 'badgeId', 'color'],
                 properties: {
                   tier: { type: 'integer' },
                   subrank: { type: 'integer' },
                   name: { type: 'string' },
                   imageUrl: nullable('string'),
+                  badgeId: nullable('integer', { description: 'v1.12.0. tier × 10 + subrank' }),
+                  color: nullable('string', { description: 'v1.12.0' }),
                 },
               },
             ],
@@ -1680,6 +1803,11 @@ export const openApiDocument: O.Document = {
           'purchases',
           'finalItemIds',
           'abilityUpgrades',
+          'kda',
+          'netWorthRank',
+          'teamNetWorthRank',
+          'lastHitsPerMinute',
+          'performanceTags',
         ],
         properties: {
           steamId: nullable('string'),
@@ -1741,6 +1869,26 @@ export const openApiDocument: O.Document = {
               },
             },
           },
+          kda: nullable('number', {
+            description: 'v1.12.0. `(K + A) / max(D, 1)`, 2 décimales ; null si K, D ou A inconnu.',
+          }),
+          netWorthRank: nullable('integer', {
+            description:
+              'v1.12.0. Rang de valeur nette dans la partie (12 joueurs), décroissant, rang « compétition » : les ex æquo partagent le meilleur rang (1, 2, 2, 4). null si la valeur nette du joueur est inconnue.',
+          }),
+          teamNetWorthRank: nullable('integer', {
+            description: 'v1.12.0. Même règle, au sein de l’équipe.',
+          }),
+          lastHitsPerMinute: nullable('number', {
+            description:
+              'v1.12.0. `lastHits / (durée / 60)`, 2 décimales ; null si durée inconnue.',
+          }),
+          performanceTags: {
+            type: 'array',
+            description:
+              'v1.12.0. Distinctions calculées par The Baroness (≠ `mvpRank`, valeur officielle de Valve). Attribuées seulement si la statistique est connue pour tous les joueurs de la partie ; tous les ex æquo la reçoivent.',
+            items: { type: 'string', enum: ['match_top_net_worth', 'match_best_kda'] },
+          },
         },
       },
       MatchPlayerStats: {
@@ -1797,10 +1945,72 @@ export const openApiDocument: O.Document = {
             type: 'array',
             items: {
               type: 'object',
-              required: ['side', 'outcome', 'averageBadge', 'averageRankName', 'players'],
+              required: [
+                'side',
+                'outcome',
+                'result',
+                'averageBadge',
+                'averageRankName',
+                'totals',
+                'totalsCoverage',
+                'players',
+              ],
               properties: {
                 side: { type: 'string', enum: ['amber', 'sapphire'] },
-                outcome: { type: 'string', enum: ['win', 'loss'] },
+                outcome: {
+                  type: 'string',
+                  enum: ['win', 'loss'],
+                  description:
+                    'Historique : vaut « loss » aussi quand le vainqueur est inconnu. Préférer `result`.',
+                },
+                result: {
+                  type: ['string', 'null'],
+                  enum: ['win', 'loss', null],
+                  description: 'v1.12.0. null si le vainqueur est inconnu.',
+                },
+                totals: {
+                  type: 'object',
+                  description:
+                    'v1.12.0. Somme sur l’équipe, seulement si la valeur est connue pour tous ses joueurs (sinon null, jamais une somme partielle).',
+                  required: [
+                    'kills',
+                    'deaths',
+                    'assists',
+                    'netWorth',
+                    'lastHits',
+                    'denies',
+                    'playerDamage',
+                    'damageTaken',
+                    'objectiveDamage',
+                    'healing',
+                  ],
+                  properties: Object.fromEntries(
+                    [
+                      'kills',
+                      'deaths',
+                      'assists',
+                      'netWorth',
+                      'lastHits',
+                      'denies',
+                      'playerDamage',
+                      'damageTaken',
+                      'objectiveDamage',
+                      'healing',
+                    ].map((k) => [k, nullable('integer')]),
+                  ),
+                },
+                totalsCoverage: {
+                  type: 'object',
+                  required: ['players', 'knownPlayers'],
+                  properties: {
+                    players: { type: 'integer' },
+                    knownPlayers: {
+                      type: 'object',
+                      description: 'Joueurs dont la valeur est connue, par clé de `totals`',
+                      additionalProperties: { type: 'integer' },
+                    },
+                  },
+                },
                 averageBadge: nullable('integer', {
                   description: 'Badge moyen de l’équipe (tier × 10 + subrank) ; null si inconnu.',
                 }),
@@ -1843,6 +2053,26 @@ export const openApiDocument: O.Document = {
               'Moyenne des ratios par partie `netWorth / (durationSeconds / 60)` (net worth connu, durée > 0).',
           }),
           netWorthPerMinuteSampleSize: sampleSize('le net worth par minute'),
+          globalMeta: {
+            description:
+              'v1.12.0. Méta globale du héros (`/heroes/{heroId}/stats`, même cache), période dans `metaContext`. null si indisponible.',
+            oneOf: [
+              { type: 'null' },
+              {
+                type: 'object',
+                required: ['matches', 'winRate', 'pickRate'],
+                properties: {
+                  matches: nullable('integer'),
+                  winRate: nullable('number'),
+                  pickRate: nullable('number'),
+                },
+              },
+            ],
+          },
+          winRateVsMeta: nullable('number', {
+            description:
+              'v1.12.0. `winRate − globalMeta.winRate` en points ; null si l’un est inconnu. Direct seulement si `metaContext.comparable`.',
+          }),
         },
       },
       AnalyticsFilters: {
@@ -1942,9 +2172,10 @@ export const openApiDocument: O.Document = {
         properties: {
           filters: {
             type: 'object',
-            required: ['size', 'gameMode', 'matchMode'],
+            required: ['size', 'period', 'gameMode', 'matchMode'],
             properties: {
               size: { type: 'integer' },
+              period: { type: ['string', 'null'], enum: ['7d', '30d', 'season', null] },
               gameMode: { type: 'string', enum: ['all', 'normal', 'street_brawl'] },
               matchMode: { type: 'string', enum: ['all', 'ranked', 'unranked'] },
             },
@@ -2046,19 +2277,89 @@ export const openApiDocument: O.Document = {
               },
             },
           },
+          series: {
+            type: 'array',
+            description:
+              'v1.12.0. Une entrée par partie du bloc récent (`size` au plus), du plus ancien au plus récent. Remplace les calculs par partie du front.',
+            items: ref('TrendPoint'),
+          },
           coverage: {
             type: 'object',
-            required: ['eligibleMatches', 'rollingWindow', 'notes'],
+            required: [
+              'eligibleMatches',
+              'rollingWindow',
+              'seriesMatches',
+              'seriesFrom',
+              'seriesTo',
+              'rollingPointsComplete',
+              'notes',
+            ],
             properties: {
               eligibleMatches: { type: 'integer' },
               rollingWindow: { type: 'integer' },
+              seriesMatches: { type: 'integer', description: 'Taille de `series`' },
+              seriesFrom: nullable('string', { format: 'date-time' }),
+              seriesTo: nullable('string', { format: 'date-time' }),
+              rollingPointsComplete: {
+                type: 'integer',
+                description: 'Points de `series` dont `rollingWinRate` est défini',
+              },
               notes: {
                 type: 'array',
-                items: { type: 'string', enum: ['insufficient_history', 'history_stale'] },
+                items: {
+                  type: 'string',
+                  enum: ['insufficient_history', 'history_stale', 'season_start_unknown'],
+                },
               },
             },
           },
           meta: ref('DataMeta'),
+        },
+      },
+      TrendPoint: {
+        type: 'object',
+        required: [
+          'matchId',
+          'at',
+          'heroId',
+          'win',
+          'matchMode',
+          'gameMode',
+          'kills',
+          'deaths',
+          'assists',
+          'kda',
+          'netWorthPerMinute',
+          'durationSeconds',
+          'rollingWinRate',
+          'rollingSampleSize',
+        ],
+        properties: {
+          matchId: { type: 'string' },
+          at: { type: 'string', format: 'date-time' },
+          heroId: { type: 'integer' },
+          win: { type: 'boolean' },
+          matchMode: { type: ['string', 'null'] },
+          gameMode: { type: ['string', 'null'] },
+          kills: nullable('integer'),
+          deaths: nullable('integer'),
+          assists: nullable('integer'),
+          kda: nullable('number', {
+            description: '`(K + A) / max(D, 1)`, 2 décimales ; null si K, D ou A inconnu',
+          }),
+          netWorthPerMinute: nullable('number', {
+            description: 'Souls/min : `netWorth / (durée / 60)`, 2 décimales ; null si durée ≤ 0',
+          }),
+          durationSeconds: nullable('integer'),
+          rollingWinRate: nullable('number', {
+            description:
+              'Winrate (%) sur cette partie et les 9 précédentes du même périmètre (même hors bloc) ; null s’il en manque',
+          }),
+          rollingSampleSize: {
+            type: 'integer',
+            maximum: 10,
+            description: 'Parties disponibles dans la fenêtre glissante (≤ 10)',
+          },
         },
       },
       CatalogItem: {
@@ -2483,6 +2784,106 @@ export const openApiDocument: O.Document = {
           items: { type: 'array', items: ref('MatchSummary') },
           nextCursor: nullable('string'),
           appliedFilters: ref('AppliedFilters'),
+          meta: ref('DataMeta'),
+        },
+      },
+      TrackedInsights: {
+        type: 'object',
+        required: ['items', 'total', 'truncated', 'meta'],
+        properties: {
+          items: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: [
+                'trackedPlayerId',
+                'steamId',
+                'alias',
+                'tags',
+                'status',
+                'player',
+                'rank',
+                'lastMatchAt',
+                'form',
+                'meta',
+                'error',
+              ],
+              properties: {
+                trackedPlayerId: { type: 'string' },
+                steamId: { type: 'string' },
+                alias: { type: 'string' },
+                tags: { type: 'array', items: { type: 'string' } },
+                status: {
+                  type: 'string',
+                  enum: ['ok', 'partial', 'not_found', 'unavailable'],
+                  description:
+                    '`partial` : historique ou rangs indisponibles (rang/forme null) ; `not_found` : profil introuvable ; `unavailable` : source en échec.',
+                },
+                player: {
+                  oneOf: [
+                    { type: 'null' },
+                    {
+                      type: 'object',
+                      required: ['displayName', 'avatarUrl'],
+                      properties: {
+                        displayName: { type: 'string' },
+                        avatarUrl: nullable('string'),
+                      },
+                    },
+                  ],
+                },
+                rank: {
+                  description:
+                    'Badge de la dernière partie classée (rang « non classé » si aucune) ; null si inconnu.',
+                  oneOf: [{ type: 'null' }, ref('PlayerRank')],
+                },
+                lastMatchAt: nullable('string', { format: 'date-time' }),
+                form: {
+                  oneOf: [
+                    { type: 'null' },
+                    {
+                      type: 'object',
+                      required: [
+                        'results',
+                        'matchIds',
+                        'wins',
+                        'losses',
+                        'winRate',
+                        'sampleSize',
+                        'requestedSize',
+                      ],
+                      properties: {
+                        results: {
+                          type: 'array',
+                          description: 'Du plus récent au plus ancien',
+                          items: { type: 'string', enum: ['win', 'loss'] },
+                        },
+                        matchIds: { type: 'array', items: { type: 'string' } },
+                        wins: { type: 'integer' },
+                        losses: { type: 'integer' },
+                        winRate: nullable('number'),
+                        sampleSize: { type: 'integer', description: '≤ requestedSize' },
+                        requestedSize: { type: 'integer', enum: [10] },
+                      },
+                    },
+                  ],
+                },
+                meta: { oneOf: [{ type: 'null' }, ref('DataMeta')] },
+                error: {
+                  oneOf: [
+                    { type: 'null' },
+                    {
+                      type: 'object',
+                      required: ['code', 'message'],
+                      properties: { code: { type: 'string' }, message: { type: 'string' } },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+          total: { type: 'integer', description: 'Nombre total de suivis du compte' },
+          truncated: { type: 'boolean', description: 'true si plus de 100 suivis' },
           meta: ref('DataMeta'),
         },
       },
