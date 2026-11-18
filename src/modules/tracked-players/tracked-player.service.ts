@@ -7,6 +7,9 @@ import {
 } from './tracked-player.model';
 import type { CreateTrackedPlayerInput, UpdateTrackedPlayerInput } from './tracked-player.schemas';
 
+/** Suivis maximum par compte (borne aussi le coût de `/tracked-players/insights`). */
+export const TRACKED_MAX = 100;
+
 const trackedNotFound = () => notFound('Suivi introuvable.');
 
 /**
@@ -26,6 +29,13 @@ export const trackedPlayerService = {
   },
 
   async create(ownerId: string, input: CreateTrackedPlayerInput): Promise<TrackedPlayerDto> {
+    if ((await TrackedPlayerModel.countDocuments({ ownerId })) >= TRACKED_MAX) {
+      throw new AppError(
+        409,
+        'TRACKED_LIMIT_REACHED',
+        `Limite de ${TRACKED_MAX} joueurs suivis atteinte.`,
+      );
+    }
     try {
       const doc = await TrackedPlayerModel.create({ ...input, ownerId });
       return toTrackedPlayerDto(doc);

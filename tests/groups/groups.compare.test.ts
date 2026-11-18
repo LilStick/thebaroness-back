@@ -188,7 +188,12 @@ describe('GET /api/groups/:id/compare', () => {
       rankHistory: [85, 86, 86, 91, 91, 92].map((badge) => ({
         at: expect.any(String),
         score: Math.floor(badge / 10) * 6 + (badge % 10),
+        badge,
       })),
+      // Ajouts v1.12.0 : score actuel (92 → 9*6+2), progression 92 − 85 en score, échantillon.
+      currentRankScore: 56,
+      rankDelta: 3,
+      kdaSampleSize: 7,
     });
     // Ordre chronologique.
     const times = a.rankHistory.map((p: { at: string }) => Date.parse(p.at));
@@ -205,7 +210,30 @@ describe('GET /api/groups/:id/compare', () => {
       rank: null,
       rankHistory: [],
       avatarUrl: null,
+      currentRankScore: null,
+      rankDelta: null,
+      kdaSampleSize: 0,
     });
+    // Highlights calculés par le back : forme stable, un membre sans parties n'est jamais primé.
+    const highlights = Object.fromEntries(
+      res.body.highlights.map((h: { key: string }) => [h.key, h]),
+    );
+    expect(Object.keys(highlights)).toEqual([
+      'biggest_climb',
+      'best_win_rate',
+      'most_wins',
+      'best_kda',
+      'longest_win_streak',
+      'best_match',
+    ]);
+    expect(highlights.biggest_climb).toMatchObject({ steamIds: [a.steamId], value: 3 });
+    expect(highlights.best_win_rate).toMatchObject({
+      steamIds: [a.steamId],
+      eligibleMembers: 1,
+      minMatches: 5,
+    });
+    expect(highlights.best_match).toMatchObject({ steamIds: [a.steamId], matchId: '1', value: 10 });
+    expect(res.body.methodology).toMatchObject({ highlightMinMatches: 5 });
   });
 
   it('7 jours : parties plus anciennes exclues', async () => {

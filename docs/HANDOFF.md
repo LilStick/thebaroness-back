@@ -3,15 +3,40 @@
 Fichier de liaison entre le Claude du back (`thebaroness-back`) et celui du front (`thebaroness`).
 Le Claude du front le lit après un `pull` du back. Pendant côté front : `thebaroness/docs/HANDOFF.md`, lu par le back à chaque session.
 
-Dernière mise à jour : 17/11/2026 (voir `git log -- docs/HANDOFF.md` pour le SHA). HANDOFF front relu sur `refonte-ui` au commit `5ec268f` (pack Profil joueur V2). Phases P1 (v1.10.0) et P2 (v1.11.0) livrées.
+Dernière mise à jour : 18/11/2026 (voir `git log -- docs/HANDOFF.md` pour le SHA). Audit des calculs du front `main` au commit `b2effca`. Livraison v1.12.0 : frontière des règles métier.
 
 ## A lire en premier
 
+- **v1.12.0, frontière des règles métier (18/11/2026)** : le back calcule désormais ce que le front recalculait. Tout est additif. Le détail est dans `docs/architecture/domain-boundary/FRONTEND_HANDOFF.md` : types TypeScript, exemples réels, modifications à faire côté front et code mort à supprimer. Contrat : `docs/openapi.yaml` **v1.12.0**.
 - **Phase P2 livrée en v1.11.0** (section suivante) : statistiques d'items, paires d'items, builds de héros, tendances 20 contre 20.
 - **Phase P1 livrée en v1.10.0** (section suivante) : détail de partie enrichi, historique de rang, activité, coéquipiers et adversaires, catalogue des items. **Correction de données à lire : l'historique complet inclut désormais les parties anciennes** (voir « Changement de comportement »).
 - **Profil joueur V2, P0 livré en v1.9.0** : section suivante. Contrat : `docs/openapi.yaml` **v1.9.0** (aussi sur `/api/docs`), à recopier dans `src/contracts/openapi.yaml`. Tout est additif : aucun client v1.8 n'est cassé.
 - Production : front `https://thebaroness.4esport.fr` et back `https://api.thebaroness.4esport.fr`. La v1.9.0 n'y sera qu'après le prochain déploiement du back (LilStick).
 - Dépôt GitHub `LilStick/thebaroness-back` (l'ancienne URL `deadlock-tracker-back` redirige).
+
+## Frontière des règles métier : état de livraison (v1.12.0, 18/11/2026)
+
+Audit complet dans `docs/architecture/domain-boundary/` : `AUDIT.md`, `CURRENT_VS_TARGET.md`, `API_MIGRATION_PLAN.md`, `IMPLEMENTATION_REPORT.md` et `FRONTEND_HANDOFF.md`.
+
+| Route                                     | Ajouts                                                                                                                                | Remplace côté front                                                         |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `GET /players/{id}/trends`                | `series[]` (KDA, souls/min, winrate glissant sur 10 parties par partie), `period` optionnel, couverture                               | `matchKda`, `netPerMinute`, glissement local (qui démarrait à la 5e partie) |
+| `GET /players/{id}/heroes`                | `globalMeta`, `winRateVsMeta`, `metaContext` (30 jours, mode normal, `comparable`)                                                    | 12 appels `/heroes/:id/stats`                                               |
+| `GET /matches/{id}`                       | `kda`, `netWorthRank`, `teamNetWorthRank`, `lastHitsPerMinute`, `performanceTags` ; par équipe : `result`, `totals`, `totalsCoverage` | `kdaOf`, les deux `netRank`, `teamTotal`, `csPerMin`, les badges            |
+| `GET /groups/{id}/compare`                | `currentRankScore`, `rankDelta`, `kdaSampleSize`, `rankHistory[].badge`, `highlights[]`, `methodology`                                | `currentScore`, `rankDelta`, `buildHighlights`                              |
+| `GET /tracked-players/insights` (nouveau) | une carte par suivi : identité, rang, dernière partie, forme sur 10 parties, statut par ligne                                         | 2 appels par suivi                                                          |
+| `GET /leaderboard`                        | `avatarUrl`, `badge.badgeId`, `badge.color`, `coverage`                                                                               | `EntryRank` (jusqu'à 10 appels `/players/:id`)                              |
+
+Décisions :
+
+- Les ex æquo partagent le meilleur rang (1, 2, 2, 4), et chacun reçoit les distinctions.
+- `performanceTags` est distinct de `mvpRank` (Valve).
+- Un total d'équipe partiel vaut `null`.
+- `rankDelta` vaut `null` sous 2 points.
+- La limite est de 100 suivis par compte (`409 TRACKED_LIMIT_REACHED`).
+- Le KDA agrégé (profil et groupes) porte sur les parties où K, D et A sont tous connus.
+
+Non fait : l'enrichissement des lignes d'historique (jusqu'à 50 appels `/matches/:id`), proposé dans `API_MIGRATION_PLAN.md`.
 
 ## Phase P2 : état de livraison (v1.11.0, 17/11/2026)
 
@@ -844,6 +869,13 @@ npm run dev             # proxy Vite /api vers http://localhost:3001
 Les routes catalogue et joueurs interrogent la vraie API Deadlock : prévoir une connexion internet. En cas de limitation par la source, les réponses passent en `isStale` ou `isPartial`, ou en 503 avec `Retry-After`.
 
 ## Journal des changements de contrat (du plus récent au plus ancien)
+
+- 18/11/2026 : **v1.12.0** (frontière des règles métier) :
+  - nouvelle route `GET /tracked-players/insights` ;
+  - champs ajoutés à `/trends` (`series`, `period`), `/players/{id}/heroes` (`globalMeta`, `winRateVsMeta`, `metaContext`), `MatchPlayer` (`kda`, `netWorthRank`, `teamNetWorthRank`, `lastHitsPerMinute`, `performanceTags`), aux équipes de partie (`result`, `totals`, `totalsCoverage`), à `GroupCompare` (`highlights`, `methodology`, champs par membre) et à `/leaderboard` (`avatarUrl`, `badge.badgeId`, `badge.color`, `coverage`) ;
+  - nouveau code d'erreur `TRACKED_LIMIT_REACHED` (409).
+
+  Tout est additif.
 
 - 17/11/2026 : **v1.11.0** (P2) : `/items/stats`, `/items/{itemId}/stats`, `/heroes/{heroId}/builds`, `/heroes/{heroId}/item-pairs`, `/players/{steamId}/trends`. Additif.
 

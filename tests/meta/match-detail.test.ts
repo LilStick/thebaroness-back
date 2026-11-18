@@ -1,6 +1,12 @@
 import request from 'supertest';
 import { ApiCacheModel } from '../../src/database/api-cache';
-import { finalStats, splitItems } from '../../src/modules/meta/match-detail';
+import {
+  finalStats,
+  playerMetrics,
+  splitItems,
+  teamTotals,
+  type NormalizedMatch,
+} from '../../src/modules/meta/match-detail';
 import type { CatalogItem } from '../../src/modules/items/items.service';
 import { buildTestApp } from '../helpers/app';
 import { useTestDb } from '../helpers/db';
@@ -176,6 +182,25 @@ describe('GET /api/matches/:matchId enrichi', () => {
       abilityUpgrades: null,
     });
     expect(match).toMatchObject({ matchMode: 'ranked', gameMode: 'normal' });
+    // v1.12.0 : métriques calculées (Baroness) à côté des valeurs brutes et du MVP officiel.
+    expect(best).toMatchObject({
+      kda: 5,
+      netWorthRank: 3,
+      teamNetWorthRank: 2,
+      lastHitsPerMinute: 3.33,
+      performanceTags: ['match_best_kda'],
+    });
+    // Le joueur 3 n'a pas de relevé : totaux de dégâts inconnus pour son équipe.
+    expect(match.teams[0]).toMatchObject({
+      result: 'win',
+      totals: { kills: 10, deaths: 4, assists: 6, netWorth: 60003, playerDamage: 60000 },
+      totalsCoverage: { players: 2, knownPlayers: { kills: 2, playerDamage: 2 } },
+    });
+    expect(match.teams[1]).toMatchObject({
+      result: 'loss',
+      totals: { kills: 3, playerDamage: null },
+      totalsCoverage: { players: 1, knownPlayers: { playerDamage: 0 } },
+    });
     expect(meta.isPartial).toBe(false);
     // Catalogue d'items de la version la plus récente (12).
     const itemsCall = upstream.calls.find((u) => u.pathname === '/v1/assets/items');
@@ -246,5 +271,71 @@ describe('Fonctions de détail de partie', () => {
       splitItems([{ itemId: 1, atSeconds: null, soldAtSeconds: null }], null).purchases,
     ).toBeNull();
     expect(splitItems([], index)).toEqual({ purchases: [], finalItemIds: [], abilityUpgrades: [] });
+  });
+});
+
+describe('Métriques calculées d’une partie', () => {
+  const p = (team: number, extra: Partial<NormalizedMatch['players'][number]> = {}) => ({
+    accountId: 1,
+    team,
+    heroId: 1,
+    level: 30,
+    kills: 2,
+    deaths: 1,
+    assists: 2,
+    netWorth: 1000,
+    lastHits: 60,
+    denies: 0,
+    mvpRank: null,
+    stats: null,
+    items: null,
+    ...extra,
+  });
+  const match = (players: NormalizedMatch['players'], extra: Partial<NormalizedMatch> = {}) =>
+    ({
+      startTime: 1,
+      durationSeconds: 600,
+      winningTeam: null,
+      matchMode: 4,
+      gameMode: 1,
+      averageBadges: [null, null],
+      players,
+      ...extra,
+    }) as NormalizedMatch;
+
+  it('égalités : rang compétition partagé, distinctions pour tous les ex æquo', () => {
+    const metrics = playerMetrics(
+      match([p(0, { netWorth: 5000 }), p(0, { netWorth: 5000 }), p(1, { netWorth: 3000 })]),
+    );
+    expect(metrics.map((m) => m.netWorthRank)).toEqual([1, 1, 3]);
+    expect(metrics.map((m) => m.teamNetWorthRank)).toEqual([1, 1, 1]);
+    expect(metrics[0]?.performanceTags).toEqual(['match_top_net_worth', 'match_best_kda']);
+    expect(metrics[1]?.performanceTags).toEqual(['match_top_net_worth', 'match_best_kda']);
+    expect(metrics[2]?.performanceTags).toEqual(['match_best_kda']);
+    expect(metrics[0]?.lastHitsPerMinute).toBe(6);
+  });
+
+  it('statistique manquante chez un joueur : pas de distinction, rang null pour lui seul', () => {
+    const metrics = playerMetrics(
+      match([p(0, { netWorth: null, deaths: null }), p(1, { netWorth: 2000 })], {
+        durationSeconds: null,
+      }),
+    );
+    expect(metrics[0]).toEqual({
+      kda: null,
+      netWorthRank: null,
+      teamNetWorthRank: null,
+      lastHitsPerMinute: null,
+      performanceTags: [],
+    });
+    expect(metrics[1]).toMatchObject({ netWorthRank: 1, performanceTags: [] });
+  });
+
+  it('totaux : somme seulement si tous les joueurs sont connus ; équipe vide → null', () => {
+    expect(teamTotals([p(0), p(0, { kills: null })]).totals).toMatchObject({
+      kills: null,
+      deaths: 2,
+    });
+    expect(teamTotals([]).totals.kills).toBeNull();
   });
 });

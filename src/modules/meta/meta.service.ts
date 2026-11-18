@@ -1,3 +1,4 @@
+import { percent, round2 } from '../../shared/metrics';
 import { cached } from '../../database/api-cache';
 import type { DeadlockApi, KnownRank } from '../../integrations/deadlock/deadlock.api';
 import type { RawHeroAnalytics } from '../../integrations/deadlock/deadlock.schemas';
@@ -6,7 +7,7 @@ import { accountIdToSteamId } from '../../shared/schemas';
 import { toGameMode, toMatchMode } from '../../integrations/deadlock/game-modes';
 import { dataMeta, type CatalogService } from '../catalog/catalog.service';
 import type { ItemsService } from '../items/items.service';
-import { normalizeMatch, splitItems } from './match-detail';
+import { normalizeMatch, playerMetrics, splitItems, teamTotals } from './match-detail';
 import { rankFromBadge } from '../catalog/ranks';
 
 export const LEADERBOARD_REGIONS = ['Europe', 'Asia', 'NAmerica', 'SAmerica', 'Oceania'] as const;
@@ -17,6 +18,8 @@ const TTL = {
   leaderboard: 30 * 60_000,
   /** Agrégats méta (§9.2). */
   heroStats: 30 * 60_000,
+  // Les avatars changent rarement : 6 h (un appel groupé par région).
+  leaderboardAvatars: 6 * 60 * 60_000,
   /** Partie terminée : ne change plus. */
   match: 7 * 24 * 3600_000,
 } as const;
@@ -27,9 +30,6 @@ const LEADERBOARD_SIZE = 100;
 export const MIN_TIER_SAMPLE = 200;
 const TIERS = 12;
 const PLAYERS_PER_MATCH = 12;
-
-const round2 = (value: number) => Math.round(value * 100) / 100;
-const percent = (part: number, total: number) => (total > 0 ? round2((part / total) * 100) : null);
 
 export interface HeroMetaStats {
   heroId: number;
@@ -46,6 +46,20 @@ type TeamSide = 'amber' | 'sapphire';
 const SIDES: TeamSide[] = ['amber', 'sapphire'];
 
 /** Agrège les lignes (héros, badge moyen) en statistiques par héros et par palier. */
+/**
+ * Méta de tous les héros en une entrée de cache partagée (`analytics:hero-stats`, 30 min) :
+ * une seule lecture source pour la fiche héros comme pour `/players/{id}/heroes`.
+ * Fenêtre fixée par la source (30 derniers jours), mode normal, ranked et unranked confondus.
+ */
+export function loadHeroMetaTable(deadlock: DeadlockApi) {
+  return cached('analytics:hero-stats', { ttlMs: TTL.heroStats }, async () =>
+    computeHeroMetaStats(await deadlock.getHeroAnalyticsByBadge()),
+  );
+}
+
+/** Période de la méta globale des héros (fixée par la source). */
+export const HERO_META_PERIOD = '30d' as const;
+
 export function computeHeroMetaStats(rows: RawHeroAnalytics): Record<string, HeroMetaStats> {
   const byHero = new Map<
     number,
@@ -207,34 +221,56 @@ export function createMetaService(
       ]);
       const index = heroes?.data ?? {};
       const { entries, complete } = board.data;
+      // Avatars : un seul appel groupé pour les 100 comptes, en cache séparé (échec → null).
+      const accountIds = entries.flatMap((e) => (e.accountId ? [e.accountId] : []));
+      const avatars = await cached(
+        `leaderboard-avatars:v1:${region}`,
+        { ttlMs: TTL.leaderboardAvatars },
+        async () =>
+          Object.fromEntries(
+            (await deadlock.getSteamProfiles(accountIds)).map((p) => [p.accountId, p.avatarUrl]),
+          ) as Record<string, string | null>,
+      ).catch(() => null);
       let missingRank = false;
+      const items = entries.map((entry, position) => {
+        const rank = entry.badge && tiers ? rankFromBadge(entry.badge, tiers.data) : null;
+        if (entry.badge && !tiers) missingRank = true;
+        return {
+          rank: entry.rank ?? position + 1,
+          displayName: entry.account_name ?? '',
+          steamId: entry.accountId ? accountIdToSteamId(entry.accountId) : null,
+          avatarUrl: (entry.accountId && avatars?.data[entry.accountId]) || null,
+          // Compte choisi parmi plusieurs homonymes (celui au rang le plus élevé).
+          inferred: entry.inferred,
+          badge:
+            rank?.tier != null && rank.subrank != null && rank.name
+              ? {
+                  tier: rank.tier,
+                  subrank: rank.subrank,
+                  name: rank.name,
+                  imageUrl: rank.imageUrl,
+                  badgeId: rank.badgeId,
+                  color: rank.color,
+                }
+              : null,
+          topHeroes: [...new Set(entry.top_hero_ids ?? [])].slice(0, 3).map((heroId) => ({
+            heroId,
+            name: index[heroId]?.name ?? `Héros #${heroId}`,
+            imageUrl: index[heroId]?.imageUrl ?? null,
+          })),
+        };
+      });
       return {
         region,
-        items: entries.map((entry, position) => {
-          const rank = entry.badge && tiers ? rankFromBadge(entry.badge, tiers.data) : null;
-          if (entry.badge && !tiers) missingRank = true;
-          return {
-            rank: entry.rank ?? position + 1,
-            displayName: entry.account_name ?? '',
-            steamId: entry.accountId ? accountIdToSteamId(entry.accountId) : null,
-            // Compte choisi parmi plusieurs homonymes (celui au rang le plus élevé).
-            inferred: entry.inferred,
-            badge:
-              rank?.tier != null && rank.subrank != null && rank.name
-                ? {
-                    tier: rank.tier,
-                    subrank: rank.subrank,
-                    name: rank.name,
-                    imageUrl: rank.imageUrl,
-                  }
-                : null,
-            topHeroes: [...new Set(entry.top_hero_ids ?? [])].slice(0, 3).map((heroId) => ({
-              heroId,
-              name: index[heroId]?.name ?? `Héros #${heroId}`,
-              imageUrl: index[heroId]?.imageUrl ?? null,
-            })),
-          };
-        }),
+        items,
+        coverage: {
+          entries: items.length,
+          withSteamId: items.filter((i) => i.steamId).length,
+          inferredSteamId: items.filter((i) => i.inferred).length,
+          withBadge: items.filter((i) => i.badge).length,
+          withAvatar: items.filter((i) => i.avatarUrl).length,
+          ranksComplete: complete,
+        },
         meta: { ...dataMeta(board), isPartial: !heroes || !complete || missingRank },
       };
     },
@@ -242,9 +278,7 @@ export function createMetaService(
     async heroStats(heroId: number) {
       // Vérifie l'existence du héros (404) avant d'interroger les agrégats.
       await catalog.hero(heroId);
-      const all = await cached('analytics:hero-stats', { ttlMs: TTL.heroStats }, async () =>
-        computeHeroMetaStats(await deadlock.getHeroAnalyticsByBadge()),
-      );
+      const all = await loadHeroMetaTable(deadlock);
       const stats: HeroMetaStats = all.data[heroId] ?? {
         heroId,
         matches: null,
@@ -289,6 +323,9 @@ export function createMetaService(
       const { match: info, names } = detail.data;
       const winningSide = SIDES[info.winningTeam ?? -1] ?? null;
 
+      // Métriques calculées à la lecture (le cache stocke la partie normalisée, pas les dérivés).
+      const computed = playerMetrics(info);
+      const metrics = new Map(info.players.map((p, i) => [p, computed[i]]));
       const teams = SIDES.map((side, team) => {
         const players = info.players.filter((p) => p.team === team);
         const teamKills = players.every((p) => p.kills !== null)
@@ -299,6 +336,9 @@ export function createMetaService(
         return {
           side,
           outcome: side === winningSide ? ('win' as const) : ('loss' as const),
+          // `outcome` vaut « loss » quand le vainqueur est inconnu (historique) ; `result` → null.
+          result: winningSide === null ? null : side === winningSide ? 'win' : 'loss',
+          ...teamTotals(players),
           averageBadge,
           averageRankName: averageRank?.name ?? null,
           players: players
@@ -325,6 +365,7 @@ export function createMetaService(
                     : null,
                 stats: p.stats,
                 ...splitItems(p.items, itemIndex),
+                ...metrics.get(p),
               };
             }),
         };

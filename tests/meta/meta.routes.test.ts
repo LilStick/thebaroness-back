@@ -72,6 +72,11 @@ describe('Routes P1 (classement, stats méta, partie, héros d’un joueur)', ()
       upstream
         .on(/^\/v1\/leaderboard\/Europe$/, { body: ENTRIES })
         .on(/^\/v1\/players\/rank$/, { body: [{ account_id: ACCOUNT_ID, badge: 104 }] })
+        .on(/^\/v1\/players\/steam$/, {
+          body: [
+            { account_id: ACCOUNT_ID, personaname: 'soÿer', avatarfull: 'https://a.test/s.jpg' },
+          ],
+        })
         .on(/^\/v1\/assets\/ranks$/, { body: RANKS });
       const res = await request(app).get('/api/leaderboard');
       expect(res.status).toBe(200);
@@ -81,6 +86,7 @@ describe('Routes P1 (classement, stats méta, partie, héros d’un joueur)', ()
           rank: 1,
           displayName: 'MikaelS',
           steamId: null,
+          avatarUrl: null,
           inferred: false,
           badge: null,
           topHeroes: [
@@ -93,12 +99,40 @@ describe('Routes P1 (classement, stats méta, partie, héros d’un joueur)', ()
           rank: 2,
           displayName: 'soÿer',
           steamId: STEAM_ID,
+          // Ajouts v1.12.0 : avatar (un appel groupé), badgeId et couleur du rang.
+          avatarUrl: 'https://a.test/s.jpg',
           inferred: false,
-          badge: { tier: 10, subrank: 4, name: 'Phantom 4', imageUrl: `${ASSET}/r10_4.webp` },
+          badge: {
+            tier: 10,
+            subrank: 4,
+            name: 'Phantom 4',
+            imageUrl: `${ASSET}/r10_4.webp`,
+            badgeId: 104,
+            color: '#C8A2C8',
+          },
           topHeroes: [expect.objectContaining({ heroId: 72 })],
         },
-        { rank: 3, displayName: '', steamId: null, inferred: false, badge: null, topHeroes: [] },
+        {
+          rank: 3,
+          displayName: '',
+          steamId: null,
+          avatarUrl: null,
+          inferred: false,
+          badge: null,
+          topHeroes: [],
+        },
       ]);
+      expect(res.body.coverage).toEqual({
+        entries: 3,
+        withSteamId: 1,
+        inferredSteamId: 0,
+        withBadge: 1,
+        withAvatar: 1,
+        ranksComplete: true,
+      });
+      // Avatars : un seul appel groupé, puis servis par le cache.
+      await request(app).get('/api/leaderboard');
+      expect(upstream.calls.filter((u) => u.pathname === '/v1/players/steam')).toHaveLength(1);
       expect(res.body.meta).toMatchObject({ isStale: false, isPartial: false });
       // Un seul appel de rangs pour tous les comptes candidats.
       const rankCalls = upstream.calls.filter((u) => u.pathname === '/v1/players/rank');
@@ -393,6 +427,12 @@ describe('Routes P1 (classement, stats méta, partie, héros d’un joueur)', ()
         purchases: null,
         finalItemIds: null,
         abilityUpgrades: null,
+        // Ajouts v1.12.0 : métriques calculées, champs bruts inchangés.
+        kda: 7,
+        netWorthRank: 1,
+        teamNetWorthRank: 1,
+        lastHitsPerMinute: 5.44,
+        performanceTags: ['match_top_net_worth', 'match_best_kda'],
       });
       // Profil introuvable → SteamID ; compte inconnu (0) → steamId null.
       expect(match.teams[0].players[1].displayName).toBe('76561197960265738');
@@ -431,6 +471,40 @@ describe('Routes P1 (classement, stats méta, partie, héros d’un joueur)', ()
       player_match_outcome: outcome,
     });
 
+    it('méta globale jointe en une lecture de cache, période 30 jours explicite', async () => {
+      upstream
+        .on(/^\/v1\/players\/steam$/, { body: [{ account_id: ACCOUNT_ID, personaname: 'soÿer' }] })
+        .on(/match-history/, {
+          body: [match(1, 72, 1, 10, 2, 10), match(2, 72, 2, 2, 5, 3), match(3, 72, 1, 8, 0, 4)],
+        })
+        .on(/^\/v1\/analytics\/hero-stats$/, {
+          body: [{ hero_id: 72, bucket: 0, matches: 650, wins: 300 }],
+        });
+      const res = await request(app).get(`/api/players/${STEAM_ID}/heroes`);
+      expect(res.body.items[0]).toMatchObject({
+        heroId: 72,
+        winRate: 66.67,
+        globalMeta: { matches: 650, winRate: 46.15, pickRate: expect.any(Number) },
+        // 66.67 − 46.15
+        winRateVsMeta: 20.52,
+      });
+      // Sans période 30 jours en mode normal, la comparaison n'est pas directe.
+      expect(res.body.metaContext).toMatchObject({
+        period: '30d',
+        gameMode: 'normal',
+        matchMode: 'all',
+        comparable: false,
+        isStale: false,
+      });
+      await request(app).get(`/api/players/${STEAM_ID}/heroes`).query({ period: '30d' });
+      const scoped = await request(app)
+        .get(`/api/players/${STEAM_ID}/heroes`)
+        .query({ period: '30d', gameMode: 'normal' });
+      expect(scoped.body.metaContext.comparable).toBe(true);
+      // Une seule lecture source pour tous les héros et toutes les requêtes.
+      expect(upstream.calls.filter((u) => u.pathname.includes('analytics'))).toHaveLength(1);
+    });
+
     it('regroupe les parties par héros, trié par nombre de parties', async () => {
       upstream
         .on(/^\/v1\/players\/steam$/, { body: [{ account_id: ACCOUNT_ID, personaname: 'soÿer' }] })
@@ -458,6 +532,9 @@ describe('Routes P1 (classement, stats méta, partie, héros d’un joueur)', ()
           kdaSampleSize: 3,
           avgNetWorthPerMinute: 1000,
           netWorthPerMinuteSampleSize: 3,
+          // Ajouts v1.12.0 : méta globale indisponible ici (source non simulée) → null.
+          globalMeta: null,
+          winRateVsMeta: null,
         },
         {
           heroId: 6,
@@ -471,6 +548,8 @@ describe('Routes P1 (classement, stats méta, partie, héros d’un joueur)', ()
           kdaSampleSize: 1,
           avgNetWorthPerMinute: 1000,
           netWorthPerMinuteSampleSize: 1,
+          globalMeta: null,
+          winRateVsMeta: null,
         },
       ]);
     });

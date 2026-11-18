@@ -3,6 +3,7 @@ export type ErrorCode =
   | 'UNAUTHORIZED'
   | 'NOT_FOUND'
   | 'ALREADY_TRACKED'
+  | 'TRACKED_LIMIT_REACHED'
   | 'RATE_LIMITED'
   | 'INTERNAL_ERROR'
   | 'UPSTREAM_ERROR'

@@ -1,3 +1,4 @@
+import { kda, mean, percent, perMinute, round2 } from '../../shared/metrics';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { GameMode, MatchMode } from '../../integrations/deadlock/game-modes';
@@ -144,11 +145,6 @@ export function selectMatches<M extends ProfileMatch>(
   return result;
 }
 
-const round2 = (value: number) => Math.round(value * 100) / 100;
-const percent = (part: number, total: number) => (total ? round2((part / total) * 100) : null);
-const mean = (values: number[]) =>
-  values.length ? values.reduce((sum, v) => sum + v, 0) / values.length : null;
-
 export interface Aggregate {
   matches: number;
   wins: number;
@@ -180,15 +176,14 @@ export function aggregate(matches: ProfileMatch[]): Aggregate {
   const kills = sum('kills');
   const deaths = sum('deaths');
   const assists = sum('assists');
-  const perMinute = matches.flatMap((m) =>
-    m.netWorth !== null && m.duration !== null && m.duration > 0
-      ? [m.netWorth / (m.duration / 60)]
-      : [],
-  );
+  const netPerMinute = matches.flatMap((m) => {
+    const value = perMinute(m.netWorth, m.duration);
+    return value === null ? [] : [value];
+  });
   const durations = matches.flatMap((m) =>
     m.duration !== null && m.duration > 0 ? [m.duration] : [],
   );
-  const avgPerMinute = mean(perMinute);
+  const avgPerMinute = mean(netPerMinute);
   const avgDuration = mean(durations);
   return {
     matches: matches.length,
@@ -198,13 +193,10 @@ export function aggregate(matches: ProfileMatch[]): Aggregate {
     kills,
     deaths,
     assists,
-    kda:
-      kills !== null && deaths !== null && assists !== null
-        ? round2((kills + assists) / Math.max(deaths, 1))
-        : null,
+    kda: kda(kills, deaths, assists),
     kdaSampleSize: complete.length,
     avgNetWorthPerMinute: avgPerMinute === null ? null : round2(avgPerMinute),
-    netWorthPerMinuteSampleSize: perMinute.length,
+    netWorthPerMinuteSampleSize: netPerMinute.length,
     avgDurationSeconds: avgDuration === null ? null : Math.round(avgDuration),
     durationSampleSize: durations.length,
   };
@@ -339,6 +331,8 @@ export type RelationshipsQuery = z.infer<typeof relationshipsQuerySchema>;
 
 /** Tendances : N dernières parties contre les N précédentes (5 à 50, défaut 20). */
 export const trendsQuerySchema = z.object({
+  /** Optionnel : sans période, tout l'historique du périmètre (comportement v1.11). */
+  period: periodSchema.optional(),
   size: z.coerce
     .number('size : entier entre 5 et 50')
     .int('size : entier entre 5 et 50')
@@ -375,9 +369,37 @@ export function trends(matches: ProfileMatch[], size: number) {
     const wins = windowMatches.filter((x) => x.win).length;
     return [{ at: m.startTime, matchId: m.matchId, winRate: percent(wins, ROLLING_WINDOW) }];
   });
+  // Série par partie du bloc récent (ordre chronologique). Le winrate glissant de chaque point
+  // porte sur cette partie et les 9 précédentes du même périmètre, y compris hors bloc.
+  const series = recentList
+    .map((m, i) => {
+      const windowMatches = matches.slice(i, i + ROLLING_WINDOW);
+      const full = windowMatches.length === ROLLING_WINDOW;
+      const netPerMinute = perMinute(m.netWorth, m.duration);
+      return {
+        matchId: m.matchId,
+        at: m.startTime,
+        heroId: m.heroId,
+        win: m.win,
+        matchMode: m.matchMode ?? null,
+        gameMode: m.gameMode ?? null,
+        kills: m.kills,
+        deaths: m.deaths,
+        assists: m.assists,
+        kda: kda(m.kills, m.deaths, m.assists),
+        netWorthPerMinute: netPerMinute === null ? null : round2(netPerMinute),
+        durationSeconds: m.duration,
+        rollingWinRate: full
+          ? percent(windowMatches.filter((x) => x.win).length, ROLLING_WINDOW)
+          : null,
+        rollingSampleSize: windowMatches.length,
+      };
+    })
+    .reverse();
   return {
     recent,
     previous,
+    series,
     delta: {
       winRate: diff('winRate'),
       kda: diff('kda'),

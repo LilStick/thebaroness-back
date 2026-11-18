@@ -409,6 +409,27 @@ describe('Tendances (trends)', () => {
     expect(result.complete).toBe(true);
   });
 
+  it('série par partie : KDA, souls/min, glissant sur 10 parties y compris hors bloc', () => {
+    const list = Array.from({ length: 12 }, (_, i) => m(i, i < 6, 3));
+    list[1] = { ...list[1]!, deaths: null as unknown as number };
+    list[2] = { ...list[2]!, duration: 0 };
+    const { series } = trends(list, 5);
+    expect(series.map((p) => p.matchId)).toEqual(['96', '97', '98', '99', '100']);
+    const latest = series.at(-1)!;
+    expect(latest).toMatchObject({
+      kda: 3,
+      netWorthPerMinute: 1000,
+      // 100..91 : 6 victoires sur 10.
+      rollingWinRate: 60,
+      rollingSampleSize: 10,
+    });
+    // Valeur inconnue → null, jamais 0.
+    expect(series.find((p) => p.matchId === '99')?.kda).toBeNull();
+    expect(series.find((p) => p.matchId === '98')?.netWorthPerMinute).toBeNull();
+    // 96 : seulement 8 parties jusqu'à la plus ancienne (96..89) → glissant null.
+    expect(series[0]).toMatchObject({ rollingWinRate: null, rollingSampleSize: 8 });
+  });
+
   it('historique insuffisant → previous null, deltas null, glissant vide sous 10 parties', () => {
     const result = trends(
       Array.from({ length: 7 }, (_, i) => m(i, true)),
@@ -439,11 +460,37 @@ describe('GET /players/:steamId/trends', () => {
       .on(/match-history$/, { body: history });
     let res = await request(app).get(`/api/players/${STEAM_ID}/trends`);
     expect(res.status).toBe(200);
-    expect(res.body.filters).toEqual({ size: 20, gameMode: 'all', matchMode: 'all' });
+    expect(res.body.filters).toEqual({
+      size: 20,
+      period: null,
+      gameMode: 'all',
+      matchMode: 'all',
+    });
     expect(res.body.recent.matches).toBe(20);
     expect(res.body.previous.matches).toBe(20);
     expect(res.body.rolling).toHaveLength(31);
-    expect(res.body.coverage).toEqual({ eligibleMatches: 45, rollingWindow: 10, notes: [] });
+    expect(res.body.coverage).toEqual({
+      eligibleMatches: 45,
+      rollingWindow: 10,
+      seriesMatches: 20,
+      seriesFrom: res.body.series[0].at,
+      seriesTo: res.body.series[19].at,
+      // 45 parties : chaque point des 20 récentes a ses 9 précédentes.
+      rollingPointsComplete: 20,
+      notes: [],
+    });
+    // Série chronologique (plus ancienne → plus récente) du bloc récent.
+    expect(res.body.series).toHaveLength(20);
+    expect(res.body.series.at(-1)).toMatchObject({
+      matchId: '1000',
+      win: true,
+      kda: 2,
+      matchMode: 'ranked',
+      gameMode: 'normal',
+      rollingSampleSize: 10,
+      // 1000..991 : alternance victoire/défaite → 50 %.
+      rollingWinRate: 50,
+    });
 
     res = await request(app)
       .get(`/api/players/${STEAM_ID}/trends`)

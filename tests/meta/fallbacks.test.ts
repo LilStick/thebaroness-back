@@ -53,6 +53,8 @@ describe('Replis et données partielles', () => {
       winningSide: null,
     });
     expect(res.body.match.teams[0].outcome).toBe('loss');
+    // v1.12.0 : `result` distingue le vainqueur inconnu (null) d'une défaite.
+    expect(res.body.match.teams.map((t: { result: unknown }) => t.result)).toEqual([null, null]);
     expect(res.body.match.teams[0].players[0]).toMatchObject({
       steamId: null,
       displayName: 'Joueur inconnu',
