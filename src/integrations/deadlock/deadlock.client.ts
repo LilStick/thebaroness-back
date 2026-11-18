@@ -25,6 +25,9 @@ const unavailable = (retryAfter?: number) =>
 const upstreamError = () =>
   new AppError(502, 'UPSTREAM_ERROR', 'Réponse inexploitable du fournisseur de statistiques.');
 
+/** Route d'un chemin pour les quotas : `/v1/players/123/match-history` → `/v1/players/:id/match-history`. */
+export const routeOf = (pathname: string) => pathname.replace(/\/\d+(?=\/|$)/g, '/:id');
+
 /** `Retry-After` en secondes (entier ou date HTTP), borné à 1 h. */
 function parseRetryAfter(header: string | null, now: number): number | undefined {
   if (!header) return undefined;
@@ -37,7 +40,9 @@ function parseRetryAfter(header: string | null, now: number): number | undefined
  * - timeout explicite ; erreurs traduites en 502 `UPSTREAM_ERROR` / 503 `SERVICE_UNAVAILABLE` ;
  * - déduplication des requêtes identiques en cours ;
  * - limite de concurrence (file d'attente FIFO) ;
- * - après un 429/503/504 avec `Retry-After`, échec immédiat jusqu'à l'échéance (pas de martelage) ;
+ * - après un 429/503/504 avec `Retry-After`, échec immédiat jusqu'à l'échéance pour la même route
+ *   (pas de martelage). Les quotas de Deadlock API sont par route (`ratelimit-*` constatés le
+ *   18/11/2026 : `/v1/players/rank` épuisé pendant que la recherche répondait 200) ;
  * - validation Zod des réponses : aucun modèle brut non vérifié ne sort du client ;
  * - la clé API éventuelle reste côté serveur et n'apparaît dans aucune erreur.
  */
@@ -45,7 +50,8 @@ export class DeadlockClient {
   private readonly inFlight = new Map<string, Promise<unknown>>();
   private readonly queue: Array<() => void> = [];
   private active = 0;
-  private blockedUntil = 0;
+  /** Échéance de blocage par route (segments numériques remplacés par `:id`). */
+  private readonly blockedUntil = new Map<string, number>();
   private readonly timeoutMs: number;
   private readonly maxConcurrent: number;
 
@@ -100,7 +106,9 @@ export class DeadlockClient {
     timeoutMs: number,
   ): Promise<z.output<S> | null> {
     const now = Date.now();
-    if (now < this.blockedUntil) throw unavailable((this.blockedUntil - now) / 1000);
+    const route = routeOf(url.pathname);
+    const until = this.blockedUntil.get(route) ?? 0;
+    if (now < until) throw unavailable((until - now) / 1000);
 
     const { logger } = this.options;
     const log = { path: url.pathname };
@@ -125,7 +133,7 @@ export class DeadlockClient {
     if (res.status === 429 || res.status === 503 || res.status === 504) {
       await res.body?.cancel();
       const retryAfter = parseRetryAfter(res.headers.get('retry-after'), Date.now());
-      if (retryAfter) this.blockedUntil = Date.now() + retryAfter * 1000;
+      if (retryAfter) this.blockedUntil.set(route, Date.now() + retryAfter * 1000);
       logger.warn({ ...log, status: res.status, retryAfter }, 'Deadlock API indisponible');
       throw unavailable(retryAfter);
     }

@@ -72,16 +72,48 @@ export async function cached<T>(
     return { data: entry.payload, fetchedAt: entry.fetchedAt, isStale: false };
   }
 
-  let data: T;
+  // Une seule lecture source par clé et par processus : les requêtes simultanées attendent la
+  // même promesse (copie profonde pour elles, la donnée pouvant être modifiée par l'appelant).
+  const running = inflight.get(key) as Promise<Fresh<T>> | undefined;
+  const pending = running ?? fetchAndStore(key, { ttlMs, staleMs, source }, fetcher);
+  if (!running) {
+    inflight.set(key, pending);
+    void pending.then(
+      () => inflight.delete(key),
+      () => inflight.delete(key),
+    );
+  }
   try {
-    data = await fetcher();
+    const fresh = await pending;
+    return {
+      data: running ? structuredClone(fresh.data) : fresh.data,
+      fetchedAt: fresh.fetchedAt,
+      isStale: false,
+    };
   } catch (error) {
     if (entry && isUpstreamFailure(error)) {
       return { data: entry.payload, fetchedAt: entry.fetchedAt, isStale: true };
     }
     throw error;
   }
+}
 
+interface Fresh<T> {
+  data: T;
+  fetchedAt: Date;
+}
+
+const inflight = new Map<string, Promise<Fresh<unknown>>>();
+
+/** Lectures source en cours (tests et diagnostic). */
+export const inflightCacheKeys = () => [...inflight.keys()];
+
+async function fetchAndStore<T>(
+  key: string,
+  { ttlMs, staleMs, source }: Required<Pick<CacheOptions<T>, 'ttlMs' | 'staleMs' | 'source'>>,
+  fetcher: () => Promise<T>,
+): Promise<Fresh<T>> {
+  const data = await fetcher();
   const fetchedAt = new Date();
   const expiresAt = new Date(
     fetchedAt.getTime() + (typeof ttlMs === 'function' ? ttlMs(data) : ttlMs),
@@ -99,5 +131,5 @@ export async function cached<T>(
     },
     { upsert: true },
   );
-  return { data, fetchedAt, isStale: false };
+  return { data, fetchedAt };
 }

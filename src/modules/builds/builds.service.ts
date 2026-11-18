@@ -1,3 +1,4 @@
+import { percent } from '../../shared/metrics';
 import { cached } from '../../database/api-cache';
 import type { DeadlockApi } from '../../integrations/deadlock/deadlock.api';
 import type { RawBuilds } from '../../integrations/deadlock/deadlock.schemas';
@@ -11,9 +12,6 @@ const BUILD_ROWS = 200;
 
 export const BUILD_SORTS = ['favorites', 'weekly_favorites', 'updated_at', 'published_at'] as const;
 export type BuildSort = (typeof BUILD_SORTS)[number];
-
-const percent = (part: number, total: number) =>
-  total ? Math.round((part / total) * 10_000) / 100 : null;
 
 /** `#Citadel_HeroBuilds_EarlyGame` → `Early Game` ; nom libre de l'auteur conservé tel quel. */
 export const categoryLabel = (name: string | null | undefined) => {

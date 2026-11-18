@@ -139,6 +139,34 @@ describe('Routes P1 (classement, stats méta, partie, héros d’un joueur)', ()
       expect(rankCalls.map((u) => u.searchParams.get('account_ids'))).toEqual([
         `1,2,3,${ACCOUNT_ID}`,
       ]);
+      // Nouveau classement (nouvel entrant) : nouvel appel groupé d'avatars, sans attendre 6 h.
+      await ApiCacheModel.deleteOne({ key: 'leaderboard:v3:Europe' });
+      upstream.reset();
+      upstream
+        .on(/^\/v1\/leaderboard\/Europe$/, {
+          body: {
+            entries: [
+              { account_name: 'soÿer', possible_account_ids: [ACCOUNT_ID], rank: 1 },
+              { account_name: 'New', possible_account_ids: [42], rank: 2 },
+            ],
+          },
+        })
+        .on(/^\/v1\/players\/rank$/, {
+          body: [
+            { account_id: ACCOUNT_ID, badge: 104 },
+            { account_id: 42, badge: 104 },
+          ],
+        })
+        .on(/^\/v1\/players\/steam$/, {
+          body: [{ account_id: 42, personaname: 'New', avatarfull: 'https://a.test/n.jpg' }],
+        })
+        .on(/^\/v1\/assets\//, { body: [] });
+      const next = await request(app).get('/api/leaderboard');
+      expect(next.body.items[1]).toMatchObject({
+        displayName: 'New',
+        avatarUrl: 'https://a.test/n.jpg',
+      });
+      expect(upstream.calls.filter((u) => u.pathname === '/v1/players/steam')).toHaveLength(1);
     });
 
     it('homonyme dont un candidat est invérifiable → aucune déduction, isPartial', async () => {

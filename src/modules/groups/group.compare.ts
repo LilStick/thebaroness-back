@@ -1,3 +1,4 @@
+import { combineMeta } from '../../shared/data-meta';
 import { rawKda, round2 } from '../../shared/metrics';
 import { AppError } from '../../shared/errors';
 import { rankFromBadge, rankScore, type PlayerRank, type RankTier } from '../catalog/ranks';
@@ -240,13 +241,10 @@ export function createGroupCompareService(players: PlayersService, catalog: Cata
         highlightMinMatches: HIGHLIGHT_MIN_MATCHES,
         ties: 'all_tied_members_in_group_order',
       },
-      meta: {
-        fetchedAt: new Date(Math.min(...sources.map((s) => s.fetchedAt.getTime()))).toISOString(),
-        sourceUpdatedAt: null,
-        isStale: sources.some((s) => s.isStale),
+      meta: combineMeta(sources, {
         // Membre omis, ou rangs/héros indisponibles.
         isPartial: available.length < group.steamIds.length || !tiers || !heroes,
-      },
+      }),
     };
   };
 }

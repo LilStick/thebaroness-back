@@ -7,7 +7,12 @@ Dernière mise à jour : 18/11/2026 (voir `git log -- docs/HANDOFF.md` pour le S
 
 ## A lire en premier
 
-- **v1.12.0, frontière des règles métier (18/11/2026)** : le back calcule désormais ce que le front recalculait. Tout est additif. Le détail est dans `docs/architecture/domain-boundary/FRONTEND_HANDOFF.md` : types TypeScript, exemples réels, modifications à faire côté front et code mort à supprimer. Contrat : `docs/openapi.yaml` **v1.13.0**, qui ajoute `include=summary` sur l'historique.
+- **v1.14.0 (18/11/2026)** :
+  - `GET /heroes/stats?heroIds=…` : méta de plusieurs héros en un appel. Pour l'accueil, cela remplace 7 à 9 appels `/heroes/:id/stats` ;
+  - `summary.netWorthPerMinute` dans l'historique ;
+  - correctif : un quota épuisé sur une route Deadlock ne bloque plus les autres routes (recherche, avatars) ;
+  - Sprint 2 vérifié : `/leaderboard` et `/players/search` sont prêts. Le détail est au § 6 ter de `docs/architecture/domain-boundary/FRONTEND_HANDOFF.md` et dans `IMPLEMENTATION_REPORT.md`.
+- **v1.12.0, frontière des règles métier (18/11/2026)** : le back calcule désormais ce que le front recalculait. Tout est additif. Le détail est dans `docs/architecture/domain-boundary/FRONTEND_HANDOFF.md` : types TypeScript, exemples réels, modifications à faire côté front et code mort à supprimer. Contrat : `docs/openapi.yaml` **v1.14.0**.
 - **Phase P2 livrée en v1.11.0** (section suivante) : statistiques d'items, paires d'items, builds de héros, tendances 20 contre 20.
 - **Phase P1 livrée en v1.10.0** (section suivante) : détail de partie enrichi, historique de rang, activité, coéquipiers et adversaires, catalogue des items. **Correction de données à lire : l'historique complet inclut désormais les parties anciennes** (voir « Changement de comportement »).
 - **Profil joueur V2, P0 livré en v1.9.0** : section suivante. Contrat : `docs/openapi.yaml` **v1.9.0** (aussi sur `/api/docs`), à recopier dans `src/contracts/openapi.yaml`. Tout est additif : aucun client v1.8 n'est cassé.
@@ -869,6 +874,15 @@ npm run dev             # proxy Vite /api vers http://localhost:3001
 Les routes catalogue et joueurs interrogent la vraie API Deadlock : prévoir une connexion internet. En cas de limitation par la source, les réponses passent en `isStale` ou `isPartial`, ou en 503 avec `Retry-After`.
 
 ## Journal des changements de contrat (du plus récent au plus ancien)
+
+- 18/11/2026 : **v1.14.0** :
+  - nouvelle route `GET /heroes/stats` (`HeroMetaBatch`) ;
+  - `PlayerMatchSummary.netWorthPerMinute`.
+
+  Additif. Comportement interne :
+  - `Retry-After` bloque désormais par route ;
+  - single-flight du cache ;
+  - avatars du classement liés à l'ensemble des comptes.
 
 - 18/11/2026 : **v1.13.0** : paramètre `include=summary` sur `/players/{steamId}/matches` (`items[].summary`, `summaryCoverage`). Additif : sans ce paramètre, la réponse ne change pas.
 

@@ -1,3 +1,4 @@
+import { combineMeta } from '../../shared/data-meta';
 import { cached, type Cached } from '../../database/api-cache';
 import type { DeadlockApi } from '../../integrations/deadlock/deadlock.api';
 import type { RawAbility } from '../../integrations/deadlock/deadlock.schemas';
@@ -28,12 +29,9 @@ interface HeroCatalog {
   index: Record<string, HeroIndexEntry>;
 }
 
-export const dataMeta = (source: Pick<Cached<unknown>, 'fetchedAt' | 'isStale'>) => ({
-  fetchedAt: source.fetchedAt.toISOString(),
-  sourceUpdatedAt: null,
-  isStale: source.isStale,
-  isPartial: false,
-});
+/** `DataMeta` d'une source unique (voir `combineMeta`). */
+export const dataMeta = (source: Pick<Cached<unknown>, 'fetchedAt' | 'isStale'>) =>
+  combineMeta([source]);
 
 export function createCatalogService(deadlock: DeadlockApi) {
   const heroCatalog = () =>
@@ -76,6 +74,12 @@ export function createCatalogService(deadlock: DeadlockApi) {
       const hero = catalog.data.heroes.find((h) => h.id === heroId);
       if (!hero) throw notFound('Héros introuvable.');
       return { hero, meta: dataMeta(catalog) };
+    },
+
+    /** Identifiants des héros jouables (même filtre que `/heroes`), triés par id. */
+    async playableHeroIds() {
+      const catalog = await heroCatalog();
+      return { ...catalog, data: catalog.data.heroes.map((h) => h.id).sort((a, b) => a - b) };
     },
 
     /** Index id → nom/portrait (cache partagé avec le catalogue). */

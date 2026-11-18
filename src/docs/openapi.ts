@@ -5,7 +5,7 @@ import type { OpenAPIV3_1 as O } from 'openapi-types';
  * Servi sur /api/openapi.json et /api/docs ; exporté dans docs/openapi.yaml (`npm run openapi`).
  * Versionnement : majeure = changement incompatible, mineure = ajout, patch = correction.
  */
-export const OPENAPI_VERSION = '1.13.0';
+export const OPENAPI_VERSION = '1.14.0';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const response = (name: string) => ({ $ref: `#/components/responses/${name}` });
@@ -444,6 +444,30 @@ export const openApiDocument: O.Document = {
       },
     },
 
+    '/heroes/stats': {
+      get: {
+        tags: ['Catalogue'],
+        summary: 'Méta de plusieurs héros en une requête',
+        description:
+          'v1.14.0. Mêmes valeurs que `/heroes/{heroId}/stats`, lues dans le même cache (`analytics:hero-stats`, 30 min, une lecture source pour tous les héros). Sans `heroIds` : tous les héros jouables, par id croissant. Les ids inconnus ou non jouables vont dans `unknownHeroIds` (pas de 404). Fenêtre fixée par la source : 30 derniers jours, mode normal, ranked et unranked confondus (`scope`).',
+        parameters: [
+          {
+            name: 'heroIds',
+            in: 'query',
+            description:
+              'Liste `6,72,13` (1 à 64 ids positifs). Doublons retirés, ordre conservé dans `items`.',
+            schema: { type: 'string', pattern: '^\\d{1,6}(,\\d{1,6}){0,63}$' },
+          },
+        ],
+        responses: {
+          '200': { description: 'Méta groupée', content: json(ref('HeroMetaBatch')) },
+          '400': response('BadRequest'),
+          '429': response('RateLimited'),
+          '502': response('UpstreamError'),
+          '503': response('ServiceUnavailable'),
+        },
+      },
+    },
     '/heroes/{heroId}/stats': {
       get: {
         tags: ['Catalogue'],
@@ -1736,6 +1760,45 @@ export const openApiDocument: O.Document = {
           },
         },
       },
+      HeroMetaBatch: {
+        type: 'object',
+        required: ['items', 'unknownHeroIds', 'scope', 'coverage', 'meta'],
+        properties: {
+          items: {
+            type: 'array',
+            description:
+              'Un `HeroMetaStats` par héros jouable demandé, dans l’ordre demandé. Héros sans donnée dans la fenêtre : valeurs null.',
+            items: ref('HeroMetaStats'),
+          },
+          unknownHeroIds: {
+            type: 'array',
+            description: 'Ids demandés inconnus ou non jouables',
+            items: { type: 'integer' },
+          },
+          scope: {
+            type: 'object',
+            required: ['period', 'gameMode', 'matchMode'],
+            properties: {
+              period: { type: 'string', enum: ['30d'] },
+              gameMode: { type: 'string', enum: ['normal'] },
+              matchMode: { type: 'string', enum: ['all'] },
+            },
+          },
+          coverage: {
+            type: 'object',
+            required: ['requested', 'known', 'withStats'],
+            properties: {
+              requested: { type: 'integer', description: 'Ids distincts demandés' },
+              known: {
+                type: 'integer',
+                description: 'Héros jouables parmi eux (= taille de `items`)',
+              },
+              withStats: { type: 'integer', description: 'Héros avec `matches` non null' },
+            },
+          },
+          meta: ref('DataMeta'),
+        },
+      },
       LeaderboardEntry: {
         type: 'object',
         required: ['rank', 'displayName', 'steamId', 'inferred', 'badge', 'topHeroes'],
@@ -2839,6 +2902,7 @@ export const openApiDocument: O.Document = {
           'teamNetWorthRank',
           'playersInMatch',
           'lastHitsPerMinute',
+          'netWorthPerMinute',
           'performanceTags',
           'finalItemIds',
           'teamAverageBadge',
@@ -2851,6 +2915,10 @@ export const openApiDocument: O.Document = {
           teamNetWorthRank: nullable('integer'),
           playersInMatch: { type: 'integer', description: 'Dénominateur de `netWorthRank`' },
           lastHitsPerMinute: nullable('number'),
+          netWorthPerMinute: nullable('number', {
+            description:
+              'v1.14.0. Souls/min : `netWorth / (durée / 60)`, 2 décimales (même formule que `/trends.series`) ; null si valeur nette inconnue ou durée ≤ 0.',
+          }),
           performanceTags: {
             type: 'array',
             items: { type: 'string', enum: ['match_top_net_worth', 'match_best_kda'] },

@@ -2,6 +2,7 @@ import request from 'supertest';
 import { ApiCacheModel } from '../../src/database/api-cache';
 import {
   finalStats,
+  playerMatchSummary,
   playerMetrics,
   splitItems,
   teamTotals,
@@ -329,6 +330,19 @@ describe('Métriques calculées d’une partie', () => {
       performanceTags: [],
     });
     expect(metrics[1]).toMatchObject({ netWorthRank: 1, performanceTags: [] });
+  });
+
+  it('résumé : souls/min arrondi, null si durée nulle ou valeur nette inconnue', () => {
+    const players = [p(0, { accountId: 7, netWorth: 12345 }), p(1)];
+    expect(playerMatchSummary(match(players), 7, null)?.netWorthPerMinute).toBe(1234.5);
+    expect(
+      playerMatchSummary(match(players, { durationSeconds: 0 }), 7, null)?.netWorthPerMinute,
+    ).toBeNull();
+    expect(
+      playerMatchSummary(match([p(0, { accountId: 7, netWorth: null })]), 7, null)
+        ?.netWorthPerMinute,
+    ).toBeNull();
+    expect(playerMatchSummary(match(players), 999, null)).toBeNull();
   });
 
   it('totaux : somme seulement si tous les joueurs sont connus ; équipe vide → null', () => {

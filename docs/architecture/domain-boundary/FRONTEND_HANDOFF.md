@@ -239,6 +239,28 @@ Exemple réel (LilStick) :
 
 Une page de 50 parties met environ 8 s à froid et 50 ms à chaud. Pour un premier affichage rapide, mieux vaut charger 20 parties.
 
+## 6 ter. `GET /heroes/stats?heroIds=6,11,13` (nouveau, v1.14.0)
+
+```ts
+interface HeroMetaBatch {
+  items: HeroMetaStats[]; // même forme que `/heroes/{id}/stats` → `stats`, ordre demandé
+  unknownHeroIds: number[]; // inconnus ou non jouables (pas de 404)
+  scope: { period: '30d'; gameMode: 'normal'; matchMode: 'all' };
+  coverage: { requested: number; known: number; withStats: number };
+  meta: DataMeta;
+}
+```
+
+`heroIds` est une liste séparée par des virgules, de 1 à 64 ids. Les doublons sont retirés. Sans ce paramètre, la route renvoie tous les héros jouables, par id croissant.
+
+**Côté React (`features/home/widgets.tsx`)** : `HeroLine` ne doit plus appeler `useHeroStats` pour chaque héros. Il faut un hook `useHeroStatsBatch(ids)` dans `MetaWidget`, qui passe `stats` à chaque ligne. Cela fait un appel au lieu de 7 à 9.
+
+Gain mesuré : 0,04 s au lieu de 0,09 s, et une requête HTTP au lieu de 9.
+
+`/heroes/{id}/stats` reste inchangé pour la fiche héros.
+
+**`include=summary` (v1.14.0)** : `summary.netWorthPerMinute: number | null` a été ajouté. Il suit la même formule que `series[].netWorthPerMinute`.
+
 ## 7. Inchangé
 
 - `/players/search` : pseudo et avatar, sans rang (ajouter le rang coûterait 2 appels par résultat).
