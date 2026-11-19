@@ -272,7 +272,10 @@ describe('Comparaison de groupe, Sprint 3 (synthétique)', () => {
         .on(/^\/v1\/players\/steam$/, (url) => {
           const id = url.searchParams.get('account_ids');
           if (id === String(B)) return { body: [] };
-          if (id === String(C)) return { status: 429, headers: { 'retry-after': '30' } };
+          // Le 429 bloque la route pour tout le processus : retardé pour que la réponse
+          // de B arrive avant, sinon B serait classé rate_limited (ordre non déterministe).
+          if (id === String(C))
+            return { status: 429, headers: { 'retry-after': '30' }, delayMs: 50 };
           return { body: PROFILES.filter((p) => String(p.account_id) === id) };
         })
         .on(/^\/v1\/players\/(\d+)\/match-history$/, (url) => ({
